@@ -1,0 +1,45 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/wayfinder-agent",
+    "crates/wayfinder-control",
+    "crates/wayfinder-save",
+    "crates/wayfinder-server",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+authors = ["Thomas Hodgkinson <thomashodgkinson1987@gmail.com>"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+axum = "0.8"
+binrw = "0.15"
+clap = { version = "4.5", features = ["derive"] }
+crc32fast = "1.4"
+mime_guess = "2.0"
+rust-embed = "8.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.45", features = [
+    "fs",
+    "io-util",
+    "macros",
+    "net",
+    "rt-multi-thread",
+    "signal",
+    "sync",
+    "time",
+] }
+tower-http = { version = "0.6", features = ["compression-gzip", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+wayfinder-control = { path = "crates/wayfinder-control" }
+wayfinder-save = { path = "crates/wayfinder-save" }
+
+[profile.release]
+lto = "thin"
+strip = true

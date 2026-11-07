@@ -1,0 +1,13 @@
+[package]
+name = "wayfinder-control"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Client for Savage Wind's local TCP JSON control server"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true

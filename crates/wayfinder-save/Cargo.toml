@@ -1,0 +1,12 @@
+[package]
+name = "wayfinder-save"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+description = "Breath of the Wild Switch save parser"
+
+[dependencies]
+binrw.workspace = true
+crc32fast.workspace = true
+thiserror.workspace = true
