@@ -101,3 +101,17 @@ frontend/                  Svelte 5 + Vite + Leaflet UI
 scripts/                   Map asset fetch and verification
 docs/PLAN.md               Architecture and milestones
 ```
+
+## Contributing
+
+Contributions are welcome. Read [`CONTRIBUTING.md`](CONTRIBUTING.md) for the
+branching model, development checks, save-data rules, and pull-request guidance.
+
+## License
+
+Wayfinder Slate's source code is released under the MIT License. See
+[`LICENSE.md`](LICENSE.md).
+
+The MIT License applies only to this project's source code. Map tiles, marker
+data, and icons fetched from Zelda Dungeon remain third-party material under
+their own terms; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

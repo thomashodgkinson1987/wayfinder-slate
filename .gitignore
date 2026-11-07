@@ -15,9 +15,11 @@
 .env
 .env.*
 
-# Private save fixtures
+# Never commit game saves. The real Savage Wind save lives outside this repo,
+# but guard against local copies and private fixtures too.
 /fixtures/saves/private/
 /save/
+/save_*/
 
 # Editor / OS
 .DS_Store

@@ -3,6 +3,10 @@
 Wayfinder Slate is an unofficial fan project. It is not affiliated with or
 endorsed by Nintendo, Zelda Dungeon, or the Savage Wind project.
 
+The MIT License in [`LICENSE.md`](LICENSE.md) applies only to Wayfinder Slate's
+source code. It does not apply to any third-party game assets, map tiles, marker
+data, icons, or other material described below.
+
 ## Map tiles, marker data, and map icons
 
 - Source: <https://github.com/zeldadungeon/maps>
