@@ -303,13 +303,16 @@ can still embed them.
 
 ### 6.2 Fetch pipeline
 
-`scripts/fetch-map-assets.sh` (or a Rust `xtask`):
+`scripts/fetch-map-assets.mjs` with thin `.sh` and `.cmd` wrappers:
 
 - Pins a specific zeldadungeon/maps commit.
 - Downloads only `public/botw/tiles/**`, `public/botw/markers/**`, and required
-  icons.
-- Verifies SHA-256 checksums from a manifest.
+  icons, using raw GitHub URLs with bounded concurrency.
+- Verifies SHA-256 checksums from a committed manifest.
+- Uses only Node.js built-ins, so it runs identically on Windows, Linux, and macOS
+  without Git, WSL, or Unix tools.
 - Writes to `frontend/static/map/botw/` (gitignored).
+- Can rebuild the manifest from the pinned upstream tree with `--write-manifest`.
 - Fails clearly if the upstream layout changes.
 - Can be run in CI before the Vite build.
 
@@ -378,7 +381,9 @@ wayfinder-slate/
   frontend/                  # Svelte 5 + Vite + Leaflet
   migrations/                # sqlx migrations
   scripts/
-    fetch-map-assets.sh
+    fetch-map-assets.mjs    # cross-platform Node fetcher
+    fetch-map-assets.sh     # Linux/macOS wrapper
+    fetch-map-assets.cmd    # Windows wrapper
   fixtures/
     saves/                   # synthetic / redacted test fixtures
   docs/

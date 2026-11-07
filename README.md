@@ -17,13 +17,15 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full design and milestones.
 
 - Rust 1.85+ (edition 2024)
 - Node.js 20+ and npm
-- Git (for the map asset fetch script)
+- Git (to clone the repository)
 
 ## Development
 
 ```sh
 # 1. Fetch the BotW map tiles and marker data (~49 MB, not committed)
-./scripts/fetch-map-assets.sh
+./scripts/fetch-map-assets.sh          # Linux / macOS
+# scripts\fetch-map-assets.cmd         # Windows
+# node scripts/fetch-map-assets.mjs    # any platform
 
 # 2. Install frontend dependencies and build the UI
 npm --prefix frontend install
@@ -82,6 +84,11 @@ Tiles and marker data come from the
 a specific commit and verified against `scripts/map-assets.sha256`. We use the
 assets only, not their application code. See
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+The fetcher is a dependency-free Node script, so it works on Windows, Linux, and
+macOS without Git or Unix tools. Use `--verify-only` to check an existing
+download, `--force` to re-download, or `--write-manifest` to rebuild the checksum
+manifest after changing the pinned commit.
 
 ## Repository layout
 
