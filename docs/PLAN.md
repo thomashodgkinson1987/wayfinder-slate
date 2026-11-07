@@ -494,22 +494,23 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 - [x] Verify 1.9.0 save format with supplied save
 - [x] Research Savage Wind control server and map assets
 - [x] Write this plan
-- [ ] Initialise repo, `main` + `develop`
+- [x] Initialise repo, `main` + `develop`
 
 ### M1 — Scaffold
 
-- [ ] Cargo workspace, Svelte/Vite frontend, dev scripts
-- [ ] Vite proxy, `rust-embed` release path
-- [ ] Map asset fetch script + attribution
-- [ ] CI checks (fmt, clippy, tests, frontend build)
+- [x] Cargo workspace, Svelte/Vite frontend, dev scripts
+- [x] Vite proxy, `rust-embed` release path
+- [x] Map asset fetch script + attribution
+- [x] CI checks (fmt, clippy, tests, frontend build)
 
 ### M2 — Save parser
 
-- [ ] `wayfinder-save` crate with binrw/zerocopy
-- [ ] Header/record/sentinel validation
-- [ ] Typed scalar/string/array accessors
-- [ ] Key/schema metadata and flag mapping
-- [ ] Synthetic fixtures + integration test with 1.9.0 save
+- [x] `wayfinder-save` crate with binrw/zerocopy
+- [x] Header/record/sentinel validation
+- [x] Typed scalar/string/array accessors
+- [x] Key ID metadata for core stats and inventory
+- [x] Synthetic fixtures + integration test with 1.9.0 save
+- [ ] Flag-to-map-object mapping
 - [ ] Slot discovery and caption parsing
 
 ### M3 — Database and auth
