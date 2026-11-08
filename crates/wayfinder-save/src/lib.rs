@@ -299,7 +299,100 @@ impl CompletionCount {
     }
 }
 
+/// Player statistics read from `game_data.sav`.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SaveStats {
+    /// Total play time in seconds (`PlayReport_PlayTime`).
+    pub play_time_seconds: u64,
+    /// Current rupee wallet (`CurrentRupee`).
+    pub rupees: i32,
+    /// Heart containers, converted from the save's quarter-heart units.
+    pub hearts: HeartStats,
+    /// Stamina amount and capacity, in the game's internal units.
+    pub stamina: StaminaStats,
+    /// Last saved map cell and player position.
+    pub location: SaveLocation,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct HeartStats {
+    /// Current hearts, in whole hearts (quarter-heart value divided by four).
+    pub current: f32,
+    /// Maximum hearts, in whole hearts.
+    pub max: f32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct StaminaStats {
+    /// Current stamina (`StaminaCurrentMax`).
+    pub current: f32,
+    /// Stamina capacity (`StaminaMax`).
+    pub max: f32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SaveLocation {
+    /// Map cell name, e.g. `G-6`.
+    pub map: String,
+    /// Map type, e.g. `MainField`.
+    pub map_type: String,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+}
+
+/// Summary metadata stored alongside a slot in `caption.sav`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SaveCaption {
+    /// Unix timestamp in seconds when the slot was saved.
+    pub saved_at: u64,
+    /// Internal location identifier, e.g. `FaronHatago000`.
+    pub location: String,
+    /// Internal map area, e.g. `MapArea_WestHateru`.
+    pub map_area: String,
+}
+
 impl SaveFile {
+    /// Read the core player statistics used by the dashboard.
+    pub fn stats(&self) -> SaveStats {
+        let position = self.get_vec3f(keys::PLAYER_SAVE_POS).unwrap_or([0.0; 3]);
+        let current_hearts = self.get_i32(keys::CURRENT_HART).unwrap_or(0) as f32 / 4.0;
+        let max_hearts = self.get_i32(keys::MAX_HART).unwrap_or(0) as f32 / 4.0;
+
+        SaveStats {
+            play_time_seconds: u64::from(self.get_u32(keys::PLAY_TIME).unwrap_or(0)),
+            rupees: self.get_i32(keys::CURRENT_RUPEE).unwrap_or(0),
+            hearts: HeartStats {
+                current: current_hearts,
+                max: max_hearts,
+            },
+            stamina: StaminaStats {
+                current: self.get_f32(keys::STAMINA_CURRENT_MAX).unwrap_or(0.0),
+                max: self.get_f32(keys::STAMINA_MAX).unwrap_or(0.0),
+            },
+            location: SaveLocation {
+                map: self
+                    .get_string(keys::PLAYER_SAVE_POS_MAP_NAME)
+                    .unwrap_or_default(),
+                map_type: self
+                    .get_string(keys::PLAYER_SAVE_POS_MAP_TYPE)
+                    .unwrap_or_default(),
+                x: position[0],
+                y: position[1],
+                z: position[2],
+            },
+        }
+    }
+
+    /// Read the slot metadata from a parsed `caption.sav`.
+    pub fn caption(&self) -> SaveCaption {
+        SaveCaption {
+            saved_at: u64::from(self.get_u32(keys::CAPTION_SAVED_AT).unwrap_or(0)),
+            location: self.get_string(keys::CAPTION_LOCATION).unwrap_or_default(),
+            map_area: self.get_string(keys::CAPTION_MAP_AREA).unwrap_or_default(),
+        }
+    }
+
     /// Check if a completion flag is set (non-zero).
     pub fn is_flag_set(&self, flag: &str) -> bool {
         let key = Self::completion_key(flag);
@@ -659,6 +752,18 @@ mod tests {
         out
     }
 
+    /// Encode a NUL-padded string as the repeated 32-bit words used by saves.
+    fn string_words(value: &str) -> Vec<u32> {
+        let mut bytes = value.as_bytes().to_vec();
+        while bytes.len() % 4 != 0 {
+            bytes.push(0);
+        }
+        bytes
+            .chunks_exact(4)
+            .map(|chunk| u32::from_le_bytes(chunk.try_into().expect("four bytes")))
+            .collect()
+    }
+
     #[test]
     fn parses_header_and_records() {
         let save = SaveFile::parse(build(VERSION_1_9_0, &[(1, 10), (2, 20)])).unwrap();
@@ -697,6 +802,86 @@ mod tests {
         let records: Vec<_> = words.into_iter().map(|word| (13, word)).collect();
         let save = SaveFile::parse(build(VERSION_1_9_0, &records)).unwrap();
         assert_eq!(save.get_string(13).as_deref(), Some("G-6"));
+    }
+
+    #[test]
+    fn reads_player_stats() {
+        let mut records = vec![
+            (keys::PLAY_TIME, 50_166),
+            (keys::CURRENT_RUPEE, 1_084),
+            (keys::CURRENT_HART, 16),
+            (keys::MAX_HART, 16),
+            (keys::STAMINA_MAX, 1_200.0f32.to_bits()),
+            (keys::STAMINA_CURRENT_MAX, 476.309_33f32.to_bits()),
+            (keys::PLAYER_SAVE_POS, 12.5f32.to_bits()),
+            (keys::PLAYER_SAVE_POS, (-3.25f32).to_bits()),
+            (keys::PLAYER_SAVE_POS, 0.0f32.to_bits()),
+        ];
+        records.extend(
+            string_words("G-6")
+                .into_iter()
+                .map(|word| (keys::PLAYER_SAVE_POS_MAP_NAME, word)),
+        );
+        records.extend(
+            string_words("MainField")
+                .into_iter()
+                .map(|word| (keys::PLAYER_SAVE_POS_MAP_TYPE, word)),
+        );
+
+        let save = SaveFile::parse(build(VERSION_1_9_0, &records)).unwrap();
+        let stats = save.stats();
+
+        assert_eq!(stats.play_time_seconds, 50_166);
+        assert_eq!(stats.rupees, 1_084);
+        assert_eq!(stats.hearts.current, 4.0);
+        assert_eq!(stats.hearts.max, 4.0);
+        assert!((stats.stamina.current - 476.309_33).abs() < 0.001);
+        assert_eq!(stats.stamina.max, 1_200.0);
+        assert_eq!(stats.location.map, "G-6");
+        assert_eq!(stats.location.map_type, "MainField");
+        assert_eq!(stats.location.x, 12.5);
+        assert_eq!(stats.location.y, -3.25);
+        assert_eq!(stats.location.z, 0.0);
+    }
+
+    #[test]
+    fn quarter_hearts_become_fractional_hearts() {
+        let records = [(keys::CURRENT_HART, 15), (keys::MAX_HART, 16)];
+        let save = SaveFile::parse(build(VERSION_1_9_0, &records)).unwrap();
+        let stats = save.stats();
+
+        assert_eq!(stats.hearts.current, 3.75);
+        assert_eq!(stats.hearts.max, 4.0);
+    }
+
+    #[test]
+    fn reads_caption_metadata() {
+        let mut records = vec![(keys::CAPTION_SAVED_AT, 1_794_087_241)];
+        records.extend(
+            string_words("FaronHatago000")
+                .into_iter()
+                .map(|word| (keys::CAPTION_LOCATION, word)),
+        );
+        records.extend(
+            string_words("MapArea_WestHateru")
+                .into_iter()
+                .map(|word| (keys::CAPTION_MAP_AREA, word)),
+        );
+
+        let save = SaveFile::parse(build(VERSION_1_9_0, &records)).unwrap();
+        let caption = save.caption();
+
+        assert_eq!(caption.saved_at, 1_794_087_241);
+        assert_eq!(caption.location, "FaronHatago000");
+        assert_eq!(caption.map_area, "MapArea_WestHateru");
+    }
+
+    #[test]
+    fn stats_and_caption_default_when_fields_are_absent() {
+        let save = SaveFile::parse(build(VERSION_1_9_0, &[])).unwrap();
+
+        assert_eq!(save.stats(), SaveStats::default());
+        assert_eq!(save.caption(), SaveCaption::default());
     }
 
     #[test]

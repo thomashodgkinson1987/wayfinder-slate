@@ -3,16 +3,20 @@ use std::path::PathBuf;
 use wayfinder_save::SaveFile;
 use wayfinder_save::keys;
 
+/// The optional private save used by the real-save tests.
+fn test_save_path() -> Option<PathBuf> {
+    std::env::var_os("WAYFINDER_TEST_SAVE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
 /// Parse a real 1.9.0 save when `WAYFINDER_TEST_SAVE` points at one.
 ///
 /// The supplied save is private and is never committed. CI can provide its own
 /// fixture through the same variable.
 #[test]
 fn parses_real_save_when_configured() {
-    let Some(path) = std::env::var_os("WAYFINDER_TEST_SAVE")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    else {
+    let Some(path) = test_save_path() else {
         eprintln!("skipping: WAYFINDER_TEST_SAVE is not set");
         return;
     };
@@ -29,10 +33,7 @@ fn parses_real_save_when_configured() {
 /// Verify completion summary matches expected values from the development save.
 #[test]
 fn real_save_completion_summary() {
-    let Some(path) = std::env::var_os("WAYFINDER_TEST_SAVE")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-    else {
+    let Some(path) = test_save_path() else {
         eprintln!("skipping: WAYFINDER_TEST_SAVE is not set");
         return;
     };
@@ -53,4 +54,38 @@ fn real_save_completion_summary() {
     assert_eq!(summary.locations.completed, 18); // 18 known locations discovered
     assert_eq!(summary.enemies.total, 84);
     assert_eq!(summary.enemies.completed, 1); // 1 Talus Junior defeated
+}
+
+/// Verify the player stats and caption metadata match the development save.
+#[test]
+fn real_save_stats_and_caption() {
+    let Some(path) = test_save_path() else {
+        eprintln!("skipping: WAYFINDER_TEST_SAVE is not set");
+        return;
+    };
+
+    let save = SaveFile::from_path(&path).expect("parse 1.9.0 save");
+    let stats = save.stats();
+
+    assert_eq!(stats.play_time_seconds, 50_166);
+    assert_eq!(stats.rupees, 1_084);
+    assert_eq!(stats.hearts.current, 4.0);
+    assert_eq!(stats.hearts.max, 4.0);
+    assert!((stats.stamina.current - 476.309_33).abs() < 0.01);
+    assert_eq!(stats.stamina.max, 1_200.0);
+    assert_eq!(stats.location.map, "G-6");
+    assert_eq!(stats.location.map_type, "MainField");
+
+    let caption_path = path.with_file_name("caption.sav");
+    assert!(
+        caption_path.is_file(),
+        "expected caption.sav beside {}",
+        path.display()
+    );
+    let caption = SaveFile::from_path(caption_path)
+        .expect("parse caption.sav")
+        .caption();
+    assert_eq!(caption.saved_at, 1_794_087_241);
+    assert_eq!(caption.location, "FaronHatago000");
+    assert_eq!(caption.map_area, "MapArea_WestHateru");
 }

@@ -10,9 +10,10 @@ pub const CURRENT_RUPEE: u32 = 0x2314_9bf8;
 pub const MAX_HART: u32 = 0x2906_f327;
 /// Current heart value (`CurrentHart`, s32).
 pub const CURRENT_HART: u32 = 0xbe9b_c993;
-/// Maximum stamina (`StaminaMax`, f32).
+/// Maximum stamina capacity (`StaminaMax`, f32).
 pub const STAMINA_MAX: u32 = 0x3adf_f047;
-/// Current maximum stamina after vessels (`StaminaCurrentMax`, f32).
+/// Current stamina (`StaminaCurrentMax`, f32). Despite the internal name, the
+/// game writes the current amount here, not the vessel-expanded maximum.
 pub const STAMINA_CURRENT_MAX: u32 = 0x58af_5eac;
 /// Collected Korok seed counter (`HiddenKorok_Number`, s32).
 pub const HIDDEN_KOROK_NUMBER: u32 = 0x8a94_e07a;
@@ -34,3 +35,10 @@ pub const PORCH_ITEM_VALUE1: u32 = 0x6a09_fc59;
 pub const MAP_APP_ICON_NO: u32 = 0x9383_490e;
 /// Map pin positions (`MapApp_MapIconPos`, vector3f array).
 pub const MAP_APP_ICON_POS: u32 = 0xea9d_ef3f;
+
+/// Save timestamp stored in `caption.sav`, as a Unix timestamp in seconds.
+pub const CAPTION_SAVED_AT: u32 = 0x0ba7_cf40;
+/// Location identifier stored in `caption.sav`, e.g. `FaronHatago000`.
+pub const CAPTION_LOCATION: u32 = 0x46d2_66b6;
+/// Map area stored in `caption.sav`, e.g. `MapArea_WestHateru`.
+pub const CAPTION_MAP_AREA: u32 = 0xf26f_1a02;
