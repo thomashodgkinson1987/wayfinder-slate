@@ -71,21 +71,9 @@ async fn public_config(State(config): State<Arc<Config>>) -> Json<PublicConfig> 
     })
 }
 
-async fn map_objects() -> impl IntoResponse {
-    // Serve the static map_objects.json dataset
-    match Assets::get("map/botw/markers/map_objects.json") {
-        Some(asset) => {
-            let mut response = Response::new(Body::from(asset.data.into_owned()));
-            response.headers_mut().insert(
-                header::CONTENT_TYPE,
-                "application/json".parse().unwrap(),
-            );
-            response.headers_mut().insert(
-                header::CACHE_CONTROL,
-                "public, max-age=31536000, immutable".parse().unwrap(),
-            );
-            response
-        }
+async fn map_objects() -> Response {
+    match Assets::get("data/map_objects.json") {
+        Some(asset) => asset_response("data/map_objects.json", asset.data.into_owned()),
         None => (StatusCode::NOT_FOUND, "map objects dataset not found").into_response(),
     }
 }
@@ -93,31 +81,23 @@ async fn map_objects() -> impl IntoResponse {
 async fn completion(
     State(config): State<Arc<Config>>,
     Query(query): Query<CompletionQuery>,
-) -> impl IntoResponse {
+) -> Response {
     let slot = query.slot.unwrap_or(0);
-    let save_path = config.save_dir.as_ref().map(|dir| dir.join(format!("save_0/{}/game_data.sav", slot)));
-    
-    if let Some(path) = save_path {
-        if path.exists() {
-            match wayfinder_save::SaveFile::from_path(&path) {
-                Ok(save) => {
-                    let summary = save.completion_summary();
-                    return Json(summary).into_response();
-                }
-                Err(_) => {}
-            }
+    let Some(path) = config.save_slot_path(slot) else {
+        return (StatusCode::NOT_FOUND, "save slot not found").into_response();
+    };
+
+    match wayfinder_save::SaveFile::from_path(&path) {
+        Ok(save) => Json(save.completion_summary()).into_response(),
+        Err(error) => {
+            tracing::warn!(?path, %error, "could not parse save for completion");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "save file could not be parsed",
+            )
+                .into_response()
         }
     }
-    
-    // Return empty/default completion if no save found
-    Json(wayfinder_save::CompletionSummary {
-        shrines: wayfinder_save::CompletionCount::new(136, 0),
-        towers: wayfinder_save::CompletionCount::new(15, 0),
-        koroks: wayfinder_save::CompletionCount::new(900, 0),
-        memories: wayfinder_save::CompletionCount::new(14, 0),
-        locations: wayfinder_save::CompletionCount::new(187, 0),
-        enemies: wayfinder_save::CompletionCount::new(84, 0),
-    }).into_response()
 }
 
 async fn static_asset(uri: Uri) -> Response {

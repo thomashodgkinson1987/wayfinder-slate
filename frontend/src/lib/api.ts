@@ -24,16 +24,18 @@ export interface CompletionSummary {
   enemies: CompletionCount;
 }
 
+export type MapObjectType = 'shrine' | 'tower' | 'korok' | 'memory' | 'location' | 'enemy';
+
 export interface MapObject {
-  object_type: 'shrine' | 'tower' | 'korok' | 'memory' | 'location' | 'enemy';
-  name: string;
   flag: string;
   x: number;
   z: number;
+  name?: string;
   dlc?: boolean;
   seed?: string;
   loc?: string;
-  enemy_type?: string;
+  type?: string;
+  match_name?: string;
   icon?: string;
 }
 

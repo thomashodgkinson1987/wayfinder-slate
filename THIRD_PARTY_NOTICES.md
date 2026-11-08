@@ -18,11 +18,11 @@ data, icons, or other material described below.
   repository. See `scripts/fetch-map-assets.sh`.
 - The Legend of Zelda and Breath of the Wild are trademarks of Nintendo.
 
-## Map object completion dataset (`frontend/static/map/botw/markers/map_objects.json`)
+## Map object completion dataset (`frontend/static/data/map_objects.json`)
 
 This static dataset joins Zelda Dungeon marker coordinates with save flag names
-from MIT-licensed community data. It is generated offline and committed as a
-build artifact.
+from MIT-licensed community data. It is generated offline and committed to this
+repository.
 
 Sources:
 - **Zelda Dungeon markers** (shrines, towers, Korok seeds, memories, locations,

@@ -384,6 +384,7 @@ wayfinder-slate/
     fetch-map-assets.mjs    # cross-platform Node fetcher
     fetch-map-assets.sh     # Linux/macOS wrapper
     fetch-map-assets.cmd    # Windows wrapper
+    validate-map-objects.mjs # dataset invariant checks
   fixtures/
     saves/                   # synthetic / redacted test fixtures
   docs/
@@ -534,9 +535,11 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 
 ### M5 — Dashboard and map
 
-- [x] Dashboard stats and completion (API + frontend)
+- [x] Completion API and Play Data summary
+- [ ] Dashboard stats and completion
 - [x] Leaflet custom CRS and tiles
-- [x] Korok/shrine/tower/memory/Divine Beast layers (with completion)
+- [x] Korok/shrine/tower/memory/location/enemy layers
+- [ ] Divine Beast layers (with completion)
 - [ ] Marker clustering, filters, progress
 - [ ] Coordinate calibration tests
 

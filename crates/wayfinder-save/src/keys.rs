@@ -34,19 +34,3 @@ pub const PORCH_ITEM_VALUE1: u32 = 0x6a09_fc59;
 pub const MAP_APP_ICON_NO: u32 = 0x9383_490e;
 /// Map pin positions (`MapApp_MapIconPos`, vector3f array).
 pub const MAP_APP_ICON_POS: u32 = 0xea9d_ef3f;
-
-/// Completion / map object flags.
-pub mod completion {
-    /// Clear_Dungeon000..135 (136 completable shrines; 136 is Shrine of Resurrection/dummy).
-    pub const CLEAR_DUNGEON_BASE: u32 = 0; // computed via key_id("Clear_DungeonXXX")
-    /// MapTower_01..15
-    pub const MAP_TOWER_BASE: u32 = 0; // computed via key_id("MapTower_XX")
-    /// IsGet_MemoryPhoto_000..013 (14 picture memories)
-    pub const MEMORY_PHOTO_BASE: u32 = 0; // computed via key_id("IsGet_MemoryPhoto_XXX")
-    /// MainField_Npc_HiddenKorok* (900 Korok flags)
-    pub const KOROK_BASE: u32 = 0; // computed via key_id
-    /// Location_* (187 location discovery flags)
-    pub const LOCATION_BASE: u32 = 0; // computed via key_id
-    /// MainField_IsDefeat_Enemy_* (40 Hinox, 40 Talus, 4 Molduga)
-    pub const ENEMY_BASE: u32 = 0; // computed via key_id
-}

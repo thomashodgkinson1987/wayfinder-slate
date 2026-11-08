@@ -44,9 +44,9 @@
         <h3>{completion ? 'Save loaded' : 'No snapshots yet'}</h3>
         <p>
           {#if completion}
-            Shrines: {completion.shrines.completed}/{completion.shrines.total} ({completion.shrines.percentage.toFixed(1)}%) · 
-            Towers: {completion.towers.completed}/{completion.towers.total} · 
-            Koroks: {completion.koroks.completed}/{completion.koroks.total} · 
+            Shrines: {completion.shrines.completed}/{completion.shrines.total} ({completion.shrines.percentage.toFixed(1)}%) ·
+            Towers: {completion.towers.completed}/{completion.towers.total} ·
+            Koroks: {completion.koroks.completed}/{completion.koroks.total} ·
             Memories: {completion.memories.completed}/{completion.memories.total}
           {:else}
             Once Wayfinder Slate reads a save, this page will show total play time,
@@ -104,7 +104,7 @@
     <section class="section">
       <div class="section-head">
         <div>
-          <h2>Medals & titles</h2>
+          <h2>Medals &amp; titles</h2>
           <p>Derived from flags the game already writes.</p>
         </div>
       </div>

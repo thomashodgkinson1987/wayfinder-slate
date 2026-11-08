@@ -82,6 +82,26 @@ impl Config {
             .as_ref()
             .map(|path| path.display().to_string())
     }
+
+    /// Resolve the `game_data.sav` for a slot in local/LAN mode.
+    ///
+    /// `WAYFINDER_SAVE_DIR` may point at the save root (`.../save`) or at the
+    /// `save_0` folder itself. Both layouts are accepted, and hub mode never
+    /// exposes a filesystem save.
+    pub fn save_slot_path(&self, slot: usize) -> Option<PathBuf> {
+        if self.mode == Mode::Hub {
+            return None;
+        }
+        let dir = self.save_dir.as_ref()?;
+        let slot = slot.to_string();
+        [
+            dir.join("save_0").join(&slot).join("game_data.sav"),
+            dir.join(&slot).join("game_data.sav"),
+            dir.join("game_data.sav"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+    }
 }
 
 fn wayfinder_control_addr() -> String {
@@ -162,15 +182,50 @@ mod tests {
         assert!(Mode::parse("public").is_err());
     }
 
-    #[test]
-    fn hub_has_no_filesystem_save_exposure() {
-        let config = Config {
-            mode: Mode::Hub,
+    fn test_config(mode: Mode, save_dir: Option<PathBuf>) -> Config {
+        Config {
+            mode,
             bind: "127.0.0.1:0".parse().unwrap(),
-            save_dir: Some(PathBuf::from("/private/save")),
+            save_dir,
             control_addr: "127.0.0.1:7777".parse().unwrap(),
             data_dir: PathBuf::from("data"),
-        };
+        }
+    }
+
+    #[test]
+    fn hub_has_no_filesystem_save_exposure() {
+        let config = test_config(Mode::Hub, Some(PathBuf::from("/private/save")));
         assert_eq!(config.save_dir_for_display(), None);
+        assert_eq!(config.save_slot_path(0), None);
+    }
+
+    #[test]
+    fn resolves_save_root_and_save_0_layouts() {
+        let root = std::env::temp_dir().join(format!("wayfinder-save-slot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("save_0/3")).unwrap();
+        std::fs::write(root.join("save_0/3/game_data.sav"), b"test").unwrap();
+
+        let root_config = test_config(Mode::Local, Some(root.clone()));
+        assert_eq!(
+            root_config.save_slot_path(3),
+            Some(root.join("save_0/3/game_data.sav"))
+        );
+
+        let save_0_config = test_config(Mode::Local, Some(root.join("save_0")));
+        assert_eq!(
+            save_0_config.save_slot_path(3),
+            Some(root.join("save_0/3/game_data.sav"))
+        );
+
+        std::fs::create_dir_all(root.join("direct")).unwrap();
+        std::fs::write(root.join("direct/game_data.sav"), b"test").unwrap();
+        let direct_config = test_config(Mode::Local, Some(root.join("direct")));
+        assert_eq!(
+            direct_config.save_slot_path(3),
+            Some(root.join("direct/game_data.sav"))
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

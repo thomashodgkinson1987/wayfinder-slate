@@ -256,37 +256,14 @@ impl SaveFile {
     }
 }
 
-/// Map object type for completion tracking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum MapObjectType {
-    Shrine,
-    Tower,
-    Korok,
-    Memory,
-    Location,
-    Enemy,
-}
-
-/// A map object with its save flag and completion state.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct MapObject {
-    pub object_type: MapObjectType,
-    pub name: String,
-    pub flag: String,
-    pub x: f32,
-    pub z: f32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dlc: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub seed: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub loc: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub enemy_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<String>,
-}
+/// Total completable shrines tracked by `Clear_Dungeon000..135`.
+pub const SHRINE_TOTAL: usize = 136;
+/// Total Sheikah towers tracked by `MapTower_01..15`.
+pub const TOWER_TOTAL: usize = 15;
+/// Total Korok seeds tracked by the counter field.
+pub const KOROK_TOTAL: usize = 900;
+/// Total picture memories tracked by `IsGet_MemoryPhoto_000..013`.
+pub const MEMORY_TOTAL: usize = 14;
 
 /// Completion summary for a save file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -308,6 +285,7 @@ pub struct CompletionCount {
 
 impl CompletionCount {
     pub fn new(total: usize, completed: usize) -> Self {
+        let completed = completed.min(total);
         let percentage = if total > 0 {
             completed as f32 / total as f32 * 100.0
         } else {
@@ -331,109 +309,241 @@ impl SaveFile {
     /// Get completion summary for all tracked object types.
     pub fn completion_summary(&self) -> CompletionSummary {
         // Shrines: Clear_Dungeon000..135 (136 completable)
-        let shrine_completed = (0..136).filter(|i| self.is_flag_set(&format!("Clear_Dungeon{:03}", i))).count();
+        let shrine_completed = (0..SHRINE_TOTAL)
+            .filter(|i| self.is_flag_set(&format!("Clear_Dungeon{:03}", i)))
+            .count();
         // Towers: MapTower_01..15
-        let tower_completed = (1..=15).filter(|i| self.is_flag_set(&format!("MapTower_{:02}", i))).count();
+        let tower_completed = (1..=TOWER_TOTAL)
+            .filter(|i| self.is_flag_set(&format!("MapTower_{:02}", i)))
+            .count();
         // Koroks: MainField_Npc_HiddenKorok* (900)
         let korok_completed = self.korok_completed();
         // Memories: IsGet_MemoryPhoto_000..013 (14)
-        let memory_completed = (0..14).filter(|i| self.is_flag_set(&format!("IsGet_MemoryPhoto_{:03}", i))).count();
-        // Locations: Location_* (187)
-        let location_completed = self.location_completed();
-        // Enemies: defeated flags
-        let enemy_completed = self.enemy_completed();
+        let memory_completed = (0..MEMORY_TOTAL)
+            .filter(|i| self.is_flag_set(&format!("IsGet_MemoryPhoto_{:03}", i)))
+            .count();
+        // Locations and enemies use their flag-list lengths as totals so the
+        // summary cannot drift from the data.
+        let (location_completed, location_total) = self.location_progress();
+        let (enemy_completed, enemy_total) = self.enemy_progress();
 
         CompletionSummary {
-            shrines: CompletionCount::new(136, shrine_completed),
-            towers: CompletionCount::new(15, tower_completed),
-            koroks: CompletionCount::new(900, korok_completed),
-            memories: CompletionCount::new(14, memory_completed),
-            locations: CompletionCount::new(187, location_completed),
-            enemies: CompletionCount::new(84, enemy_completed),
+            shrines: CompletionCount::new(SHRINE_TOTAL, shrine_completed),
+            towers: CompletionCount::new(TOWER_TOTAL, tower_completed),
+            koroks: CompletionCount::new(KOROK_TOTAL, korok_completed),
+            memories: CompletionCount::new(MEMORY_TOTAL, memory_completed),
+            locations: CompletionCount::new(location_total, location_completed),
+            enemies: CompletionCount::new(enemy_total, enemy_completed),
         }
     }
 
     fn korok_completed(&self) -> usize {
         // Use the counter field as a proxy since we don't embed all 900 flag names.
         // The static dataset should be used for precise per-Korok tracking.
-        self.get_u32(keys::HIDDEN_KOROK_NUMBER).map(|v| v as usize).unwrap_or(0)
+        self.get_u32(keys::HIDDEN_KOROK_NUMBER)
+            .map(|value| value as usize)
+            .unwrap_or(0)
     }
 
-    fn location_completed(&self) -> usize {
+    fn location_progress(&self) -> (usize, usize) {
         // Static list of 187 Location_* flag names from marcrobledo data.
         const LOCATION_FLAGS: &[&str] = &[
-            "Location_AdeyaVillage","Location_AkkareBigBridge","Location_AkkareGarrison",
-            "Location_AkkareZhai","Location_AkkareZhaiBridge","Location_AncientLabo",
-            "Location_Assassin","Location_BigBrotherBridge","Location_BigTree",
-            "Location_BraveFountain","Location_BrosRock","Location_CelebrationPark",
-            "Location_CentralExchange","Location_ChirakaVillage","Location_Cohorint",
-            "Location_Cokiri","Location_Corosseo","Location_DeathMountainHatago",
-            "Location_DeathMountain_Entrance","Location_DodoraBridge","Location_DragonMarsh",
-            "Location_EastDam","Location_EastGerudoRuins","Location_EastPostTownRuin",
-            "Location_Execution","Location_EzzuBridge","Location_FaronHatago000",
-            "Location_FaronHatago001","Location_FaronHatago002","Location_FironeForestEntrance",
-            "Location_FlamingoSpa","Location_FloriaBridge","Location_FlowerSandbank",
-            "Location_ForestHatago","Location_FrontGatePosttown","Location_GameBalling",
-            "Location_GameBitalockGolf","Location_GameGutsCriff","Location_GameMarathon",
-            "Location_GameShiledSurf","Location_GameYabusame","Location_GameZarashiRace",
-            "Location_GarakishiVillage","Location_GatakaraGarrison","Location_Gerudo",
-            "Location_GerudoCanyon_Entrance","Location_GerudoDesert_Entrance",
-            "Location_GerudoFossil","Location_GerudoHatago","Location_Goron",
-            "Location_GoronBridge","Location_GutinizaPlainTomb","Location_HachijoBridge",
-            "Location_Hateno","Location_HatenoGate","Location_HatenoLabo",
-            "Location_HeburaFossil","Location_HeburaLodge","Location_HopesPlateau",
-            "Location_HyralBridge","Location_HyruleCastle","Location_HyruleCastleTown",
-            "Location_HyruleCastle_Hall_0","Location_HyruleCastle_Hall_1",
-            "Location_HyruleCastle_Hall_2","Location_HyruleCastle_Room_0",
-            "Location_HyruleCastle_Room_1","Location_HyruleCastle_Room_10",
-            "Location_HyruleCastle_Room_11","Location_HyruleCastle_Room_2",
-            "Location_HyruleCastle_Room_3","Location_HyruleCastle_Room_5",
-            "Location_HyruleCastle_Room_6","Location_HyruleCastle_Room_7",
-            "Location_HyruleCastle_Room_8","Location_HyruleCastle_Room_9",
-            "Location_HyruleCentralPlace","Location_HyruleDepthHatago",
-            "Location_HyruleGarrison","Location_HyruleGround","Location_HyruleLabo",
-            "Location_HyrulePark","Location_HyrulePlace","Location_HyruleTemple",
-            "Location_HyruleWater","Location_HyruleWestHatago","Location_IceHouse",
-            "Location_JogoBridge","Location_JokuBridge","Location_Kakariko",
-            "Location_KaturaCastle","Location_KingValley","Location_KingfisherSpa",
-            "Location_KochuBridge","Location_KumSpa","Location_KunaiBridge",
-            "Location_LanayruEastEntrance","Location_LanayruWestEntrance",
-            "Location_LeMarbeBridge","Location_LightningPlateau","Location_LittleBrotherBridge",
-            "Location_LomeiIslands","Location_LostForest","Location_MapTower01",
-            "Location_MapTower02","Location_MapTower03","Location_MapTower04",
-            "Location_MapTower05","Location_MapTower06","Location_MapTower07",
-            "Location_MapTower08","Location_MapTower09","Location_MapTower10",
-            "Location_MapTower11","Location_MapTower12","Location_MapTower13",
-            "Location_MapTower14","Location_MapTower15","Location_MaronSpring",
-            "Location_MarritaExchange","Location_MasazuBridge","Location_MinakkareBridge",
-            "Location_MinakkareBridgeEast","Location_MinakkareBridgeWest","Location_Mine",
-            "Location_NantanCastle","Location_NishojiBridge","Location_NorthHatelHatago",
-            "Location_Oasis","Location_OrdinBridge","Location_OrdinFossil",
-            "Location_OsanjoBridge","Location_PostTownRuin","Location_PowerFountain",
-            "Location_RemainsElectric","Location_RemainsFire","Location_RemainsWater",
-            "Location_RemainsWind","Location_RirikendoBridge","Location_Rito",
-            "Location_RitoHatago","Location_RiverSideHatago","Location_RonronCity",
-            "Location_SaihokuCastle","Location_SarjonBridge","Location_ShichijoBridge",
-            "Location_ShigonDam","Location_ShijoBridge","Location_ShinyarkiVillage",
-            "Location_SnowStatue","Location_SojijiPark","Location_SotonkaBridge",
-            "Location_SouthGerudoLegacy","Location_SouthMine","Location_StartPoint",
-            "Location_StonePillers","Location_SusukadiBridge","Location_TabantaBridge",
-            "Location_TabantaBridgeHatago","Location_TabantaCrater","Location_TabantaHatago",
-            "Location_TabantaVillage","Location_TamourHatago","Location_TamourHatago2",
-            "Location_TaserakaBridge","Location_Taura","Location_TimesShrine",
-            "Location_ToriaBridge","Location_TotsugeBridge","Location_TurasuBridge",
-            "Location_UMiiVillage","Location_UMiiVillageShopBougu",
-            "Location_UMiiVillageShopJewel","Location_UMiiVillageShopYadoya",
-            "Location_UMiiVillageShopYorozu","Location_ValleyVillage",
-            "Location_WeaponCureSpring","Location_WeaponCureSpring_02",
-            "Location_WeaponCureSpring_03","Location_WeaponCureSpring_04",
-            "Location_WetGarrison","Location_WhiteZora","Location_WisdomFountain",
-            "Location_XekuBridge","Location_YashinoLegacy","Location_ZonauLegacy",
+            "Location_AdeyaVillage",
+            "Location_AkkareBigBridge",
+            "Location_AkkareGarrison",
+            "Location_AkkareZhai",
+            "Location_AkkareZhaiBridge",
+            "Location_AncientLabo",
+            "Location_Assassin",
+            "Location_BigBrotherBridge",
+            "Location_BigTree",
+            "Location_BraveFountain",
+            "Location_BrosRock",
+            "Location_CelebrationPark",
+            "Location_CentralExchange",
+            "Location_ChirakaVillage",
+            "Location_Cohorint",
+            "Location_Cokiri",
+            "Location_Corosseo",
+            "Location_DeathMountainHatago",
+            "Location_DeathMountain_Entrance",
+            "Location_DodoraBridge",
+            "Location_DragonMarsh",
+            "Location_EastDam",
+            "Location_EastGerudoRuins",
+            "Location_EastPostTownRuin",
+            "Location_Execution",
+            "Location_EzzuBridge",
+            "Location_FaronHatago000",
+            "Location_FaronHatago001",
+            "Location_FaronHatago002",
+            "Location_FironeForestEntrance",
+            "Location_FlamingoSpa",
+            "Location_FloriaBridge",
+            "Location_FlowerSandbank",
+            "Location_ForestHatago",
+            "Location_FrontGatePosttown",
+            "Location_GameBalling",
+            "Location_GameBitalockGolf",
+            "Location_GameGutsCriff",
+            "Location_GameMarathon",
+            "Location_GameShiledSurf",
+            "Location_GameYabusame",
+            "Location_GameZarashiRace",
+            "Location_GarakishiVillage",
+            "Location_GatakaraGarrison",
+            "Location_Gerudo",
+            "Location_GerudoCanyon_Entrance",
+            "Location_GerudoDesert_Entrance",
+            "Location_GerudoFossil",
+            "Location_GerudoHatago",
+            "Location_Goron",
+            "Location_GoronBridge",
+            "Location_GutinizaPlainTomb",
+            "Location_HachijoBridge",
+            "Location_Hateno",
+            "Location_HatenoGate",
+            "Location_HatenoLabo",
+            "Location_HeburaFossil",
+            "Location_HeburaLodge",
+            "Location_HopesPlateau",
+            "Location_HyralBridge",
+            "Location_HyruleCastle",
+            "Location_HyruleCastleTown",
+            "Location_HyruleCastle_Hall_0",
+            "Location_HyruleCastle_Hall_1",
+            "Location_HyruleCastle_Hall_2",
+            "Location_HyruleCastle_Room_0",
+            "Location_HyruleCastle_Room_1",
+            "Location_HyruleCastle_Room_10",
+            "Location_HyruleCastle_Room_11",
+            "Location_HyruleCastle_Room_2",
+            "Location_HyruleCastle_Room_3",
+            "Location_HyruleCastle_Room_5",
+            "Location_HyruleCastle_Room_6",
+            "Location_HyruleCastle_Room_7",
+            "Location_HyruleCastle_Room_8",
+            "Location_HyruleCastle_Room_9",
+            "Location_HyruleCentralPlace",
+            "Location_HyruleDepthHatago",
+            "Location_HyruleGarrison",
+            "Location_HyruleGround",
+            "Location_HyruleLabo",
+            "Location_HyrulePark",
+            "Location_HyrulePlace",
+            "Location_HyruleTemple",
+            "Location_HyruleTower",
+            "Location_HyruleWater",
+            "Location_HyruleWestHatago",
+            "Location_IceHouse",
+            "Location_JogoBridge",
+            "Location_JokuBridge",
+            "Location_Kakariko",
+            "Location_KaturaCastle",
+            "Location_KingValley",
+            "Location_KingfisherSpa",
+            "Location_KochuBridge",
+            "Location_KumSpa",
+            "Location_KunaiBridge",
+            "Location_LanayruEastEntrance",
+            "Location_LanayruWestEntrance",
+            "Location_LeMarbeBridge",
+            "Location_LightningPlateau",
+            "Location_LittleBrotherBridge",
+            "Location_LomeiIslands",
+            "Location_LostForest",
+            "Location_MapTower01",
+            "Location_MapTower02",
+            "Location_MapTower03",
+            "Location_MapTower04",
+            "Location_MapTower05",
+            "Location_MapTower06",
+            "Location_MapTower07",
+            "Location_MapTower08",
+            "Location_MapTower09",
+            "Location_MapTower10",
+            "Location_MapTower11",
+            "Location_MapTower12",
+            "Location_MapTower13",
+            "Location_MapTower14",
+            "Location_MapTower15",
+            "Location_MaronSpring",
+            "Location_MarritaExchange",
+            "Location_MasazuBridge",
+            "Location_MinakkareBridge",
+            "Location_MinakkareBridgeEast",
+            "Location_MinakkareBridgeWest",
+            "Location_Mine",
+            "Location_NantanCastle",
+            "Location_NishojiBridge",
+            "Location_NorthHatelHatago",
+            "Location_Oasis",
+            "Location_OrdinBridge",
+            "Location_OrdinFossil",
+            "Location_OsanjoBridge",
+            "Location_PostTownRuin",
+            "Location_PowerFountain",
+            "Location_RemainsElectric",
+            "Location_RemainsFire",
+            "Location_RemainsWater",
+            "Location_RemainsWind",
+            "Location_RirikendoBridge",
+            "Location_Rito",
+            "Location_RitoHatago",
+            "Location_RiverSideHatago",
+            "Location_RonronCity",
+            "Location_SaihokuCastle",
+            "Location_SarjonBridge",
+            "Location_ShichijoBridge",
+            "Location_ShigonDam",
+            "Location_ShijoBridge",
+            "Location_ShinyarkiVillage",
+            "Location_SnowStatue",
+            "Location_SojijiPark",
+            "Location_SotonkaBridge",
+            "Location_SouthGerudoLegacy",
+            "Location_SouthMine",
+            "Location_StartPoint",
+            "Location_StonePillers",
+            "Location_SusukadiBridge",
+            "Location_TabantaBridge",
+            "Location_TabantaBridgeHatago",
+            "Location_TabantaCrater",
+            "Location_TabantaHatago",
+            "Location_TabantaVillage",
+            "Location_TamourHatago",
+            "Location_TamourHatago2",
+            "Location_TaserakaBridge",
+            "Location_Taura",
+            "Location_TimesShrine",
+            "Location_ToriaBridge",
+            "Location_TotsugeBridge",
+            "Location_TurasuBridge",
+            "Location_UMiiVillage",
+            "Location_UMiiVillageShopBougu",
+            "Location_UMiiVillageShopJewel",
+            "Location_UMiiVillageShopYadoya",
+            "Location_UMiiVillageShopYorozu",
+            "Location_ValleyVillage",
+            "Location_WeaponCureSpring",
+            "Location_WeaponCureSpring_02",
+            "Location_WeaponCureSpring_03",
+            "Location_WeaponCureSpring_04",
+            "Location_WetGarrison",
+            "Location_WhiteZora",
+            "Location_WisdomFountain",
+            "Location_XekuBridge",
+            "Location_YashinoLegacy",
+            "Location_ZonauLegacy",
         ];
-        LOCATION_FLAGS.iter().filter(|f| self.is_flag_set(f)).count()
+        let completed = LOCATION_FLAGS
+            .iter()
+            .filter(|flag| self.is_flag_set(flag))
+            .count();
+        (completed, LOCATION_FLAGS.len())
     }
 
-    fn enemy_completed(&self) -> usize {
+    fn enemy_progress(&self) -> (usize, usize) {
         // Static list of 84 defeated enemy flags from marcrobledo data.
         const ENEMY_FLAGS: &[&str] = &[
             // 40 Hinox
@@ -524,7 +634,11 @@ impl SaveFile {
             "MainField_IsDefeat_Enemy_Sandworm_3569739054",
             "MainField_IsDefeat_Enemy_Sandworm_494020159",
         ];
-        ENEMY_FLAGS.iter().filter(|f| self.is_flag_set(f)).count()
+        let completed = ENEMY_FLAGS
+            .iter()
+            .filter(|flag| self.is_flag_set(flag))
+            .count();
+        (completed, ENEMY_FLAGS.len())
     }
 }
 
@@ -588,6 +702,21 @@ mod tests {
     #[test]
     fn crc_matches_known_key() {
         assert_eq!(SaveFile::key_id("CurrentRupee"), 0x2314_9bf8);
+    }
+
+    #[test]
+    fn completion_totals_match_tracked_lists() {
+        let save = SaveFile::parse(build(VERSION_1_9_0, &[])).unwrap();
+        let summary = save.completion_summary();
+        assert_eq!(summary.shrines.total, SHRINE_TOTAL);
+        assert_eq!(summary.towers.total, TOWER_TOTAL);
+        assert_eq!(summary.koroks.total, KOROK_TOTAL);
+        assert_eq!(summary.memories.total, MEMORY_TOTAL);
+        assert_eq!(summary.locations.total, 187);
+        assert_eq!(summary.enemies.total, 84);
+        assert_eq!(summary.shrines.completed, 0);
+        assert_eq!(summary.locations.completed, 0);
+        assert_eq!(summary.enemies.completed, 0);
     }
 
     #[test]

@@ -9,7 +9,13 @@
     botwBounds,
     createBotwCrs,
   } from '../lib/coords';
-  import { getMapObjects, getCompletion, type CompletionSummary, type MapObject } from '../lib/api';
+  import {
+    getMapObjects,
+    getCompletion,
+    type CompletionSummary,
+    type MapObject,
+    type MapObjectType,
+  } from '../lib/api';
 
   let { mapAssets }: { mapAssets: boolean } = $props();
 
@@ -21,7 +27,9 @@
     label: string;
   }
 
-  const STYLES: Record<string, CategoryStyle> = {
+  const OBJECT_TYPES = ['shrine', 'tower', 'memory', 'korok', 'location', 'enemy'] as const;
+
+  const STYLES: Record<MapObjectType, CategoryStyle> = {
     shrine: {
       icon: 'shrine',
       width: 26,
@@ -75,10 +83,17 @@
   let showKoroks = $state(false);
   let showLocations = $state(false);
   let showEnemies = $state(false);
-  let counts = $state({ shrine: 0, tower: 0, memory: 0, korok: 0, location: 0, enemy: 0 });
+  let counts = $state<Record<MapObjectType, number>>({
+    shrine: 0,
+    tower: 0,
+    memory: 0,
+    korok: 0,
+    location: 0,
+    enemy: 0,
+  });
   let completion = $state<CompletionSummary | null>(null);
 
-  const groups: Partial<Record<string, L.LayerGroup>> = {};
+  const groups: Partial<Record<MapObjectType, L.LayerGroup>> = {};
 
   onMount(() => {
     if (!mapEl) return;
@@ -103,7 +118,7 @@
       .attribution({ position: 'bottomleft', prefix: false })
       .addTo(instance)
       .addAttribution(
-        'Tiles & marker data © <a href="https://www.zeldadungeon.net/breath-of-the-wild-interactive-map">Zelda Dungeon</a> · Wayfinder Slate',
+        'Tiles &amp; marker data © <a href="https://www.zeldadungeon.net/breath-of-the-wild-interactive-map">Zelda Dungeon</a> · Wayfinder Slate',
       );
 
     if (mapAssets) {
@@ -129,8 +144,7 @@
   async function loadMapObjects(instance: L.Map) {
     try {
       const dataset = await getMapObjects();
-      const objectTypes = ['shrine', 'tower', 'memory', 'korok', 'location', 'enemy'] as const;
-      const datasetMap: Record<string, MapObject[]> = {
+      const datasetMap: Record<MapObjectType, MapObject[]> = {
         shrine: dataset.shrines,
         tower: dataset.towers,
         memory: dataset.memories,
@@ -139,10 +153,10 @@
         enemy: dataset.enemies,
       };
 
-      for (const type of objectTypes) {
-        const objects = datasetMap[type + 's'];
+      for (const type of OBJECT_TYPES) {
+        const objects = datasetMap[type];
         const style = STYLES[type];
-        if (!style || objects.length === 0) continue;
+        if (objects.length === 0) continue;
 
         const group = L.layerGroup();
         const icon = L.icon({
@@ -152,18 +166,19 @@
           popupAnchor: [0, -style.height + 5],
         });
 
-        for (const obj of objects) {
-          const marker = L.marker([-obj.z, obj.x], { icon, title: obj.name })
-            .bindPopup(
-              `<strong>${escapeHtml(obj.name)}</strong>${obj.dlc ? '<br><span style="opacity:.65">DLC</span>' : ''}`,
-            );
+        for (const object of objects) {
+          const name = markerName(type, object);
+          const marker = L.marker([-object.z, object.x], { icon, title: name }).bindPopup(
+            `<strong>${escapeHtml(name)}</strong>${
+              object.dlc ? '<br><span style="opacity:.65">DLC</span>' : ''
+            }`,
+          );
           marker.addTo(group);
         }
 
         groups[type] = group;
-        counts[type as keyof typeof counts] = objects.length;
-        const visible = getVisibility(type);
-        if (visible) group.addTo(instance);
+        counts[type] = objects.length;
+        if (getVisibility(type)) group.addTo(instance);
       }
     } catch (cause) {
       loadError = cause instanceof Error ? cause.message : String(cause);
@@ -178,21 +193,42 @@
     }
   }
 
-  function getVisibility(type: string): boolean {
+  function markerName(type: MapObjectType, object: MapObject): string {
     switch (type) {
-      case 'shrine': return showShrines;
-      case 'tower': return showTowers;
-      case 'memory': return showMemories;
-      case 'korok': return showKoroks;
-      case 'location': return showLocations;
-      case 'enemy': return showEnemies;
-      default: return false;
+      case 'shrine':
+      case 'tower':
+      case 'memory':
+        return object.name ?? object.flag;
+      case 'korok':
+        return object.loc ?? (object.seed ? `Korok Seed ${object.seed}` : object.flag);
+      case 'location':
+        return object.match_name ?? object.flag;
+      case 'enemy':
+        return object.type ?? 'Enemy';
+    }
+  }
+
+  function getVisibility(type: MapObjectType): boolean {
+    switch (type) {
+      case 'shrine':
+        return showShrines;
+      case 'tower':
+        return showTowers;
+      case 'memory':
+        return showMemories;
+      case 'korok':
+        return showKoroks;
+      case 'location':
+        return showLocations;
+      case 'enemy':
+        return showEnemies;
     }
   }
 
   function syncLayers() {
     if (!map) return;
-    for (const [type, group] of Object.entries(groups)) {
+    for (const type of OBJECT_TYPES) {
+      const group = groups[type];
       if (!group) continue;
       const visible = getVisibility(type);
       if (visible && !map.hasLayer(group)) group.addTo(map);
@@ -204,7 +240,7 @@
     return value.replace(
       /[&<>"']/g,
       (character) =>
-        ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": '\'' })[
+        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
           character
         ] ?? character,
     );
@@ -281,7 +317,6 @@ npm --prefix frontend run build</pre>
     <div class="panel-divider"></div>
 
     {#if completion}
-      <div class="panel-divider"></div>
       <div class="completion-summary">
         <span class="completion-row">
           <span class="swatch" style="background: #5ddbea"></span>
