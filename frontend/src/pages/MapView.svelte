@@ -100,11 +100,12 @@
   const groups: Partial<Record<MapObjectType, L.LayerGroup>> = {};
 
   onMount(() => {
-    if (!mapEl) return;
+    const el = mapEl;
+    if (!el) return;
 
     const crs = createBotwCrs();
     const bounds = botwBounds(crs);
-    const instance = L.map(mapEl, {
+    const instance = L.map(el, {
       crs,
       minZoom: 0,
       maxZoom: MAX_ZOOM,
@@ -116,6 +117,12 @@
       preferCanvas: true,
     });
     instance.setView(INITIAL_CENTER, INITIAL_ZOOM);
+
+    // Keep Leaflet's cached size in sync with the container. Without this the
+    // map is only measured once on mount and tiles stop at the initial height
+    // after viewport chrome, orientation, or the mobile layout changes.
+    const resizeObserver = new ResizeObserver(() => instance.invalidateSize());
+    resizeObserver.observe(el);
 
     L.control.zoom({ position: 'bottomright' }).addTo(instance);
     L.control
@@ -139,6 +146,7 @@
 
     map = instance;
     return () => {
+      resizeObserver.disconnect();
       instance.remove();
       map = null;
     };

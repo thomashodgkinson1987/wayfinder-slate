@@ -794,13 +794,10 @@ pre.command {
 }
 
 @media (max-width: 820px) {
-  body {
-    overflow: auto;
-  }
   .app-shell {
     flex-direction: column;
-    height: auto;
-    min-height: 100dvh;
+    height: 100dvh;
+    min-height: 0;
   }
   .sidebar {
     width: 100%;
@@ -858,10 +855,11 @@ pre.command {
   }
   .page-wrap {
     padding: 18px 16px 32px;
-    overflow: visible;
+    overflow: auto;
   }
   .page-wrap.map-page {
-    height: calc(100dvh - 132px);
+    flex: 1;
+    min-height: 0;
     overflow: hidden;
     padding: 0;
   }
