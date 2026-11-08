@@ -179,10 +179,11 @@
 
         for (const object of objects) {
           const name = markerName(type, object);
+          const detail = markerDetail(type, object);
           const marker = L.marker([-object.z, object.x], { icon, title: name }).bindPopup(
-            `<strong>${escapeHtml(name)}</strong>${
-              object.dlc ? '<br><span style="opacity:.65">DLC</span>' : ''
-            }`,
+            `<strong>${escapeHtml(name)}</strong>` +
+              (detail ? `<br><span style="opacity:.65">${escapeHtml(detail)}</span>` : '') +
+              (object.dlc ? '<br><span style="opacity:.65">DLC</span>' : ''),
           );
           marker.addTo(group);
         }
@@ -203,12 +204,19 @@
       case 'memory':
         return object.name ?? object.flag;
       case 'korok':
-        return object.loc ?? (object.seed ? `Korok Seed ${object.seed}` : object.flag);
+        return object.seed
+          ? `Korok Seed ${object.seed.replace(/^Seed/, '')}`
+          : object.loc ?? object.flag;
       case 'location':
         return object.match_name ?? object.flag;
       case 'enemy':
         return object.type ?? 'Enemy';
     }
+  }
+
+  /// Secondary line shown under a marker's title in its popup.
+  function markerDetail(type: MapObjectType, object: MapObject): string | null {
+    return type === 'korok' ? (object.loc ?? null) : null;
   }
 
   function getVisibility(type: MapObjectType): boolean {
