@@ -83,24 +83,82 @@ impl Config {
             .map(|path| path.display().to_string())
     }
 
-    /// Resolve the `game_data.sav` for a slot in local/LAN mode.
+    /// Discover saved slots in local/LAN mode.
     ///
-    /// `WAYFINDER_SAVE_DIR` may point at the save root (`.../save`) or at the
-    /// `save_0` folder itself. Both layouts are accepted, and hub mode never
-    /// exposes a filesystem save.
-    pub fn save_slot_path(&self, slot: usize) -> Option<PathBuf> {
+    /// `WAYFINDER_SAVE_DIR` may point at the save root (`.../save`), at the
+    /// `save_0` profile folder itself, or directly at one slot folder. Hub mode
+    /// never exposes a filesystem save.
+    pub fn save_slots(&self) -> Vec<usize> {
+        if self.mode == Mode::Hub {
+            return Vec::new();
+        }
+        let Some(dir) = self.save_dir.as_ref() else {
+            return Vec::new();
+        };
+
+        let profile = if dir.join("save_0").is_dir() {
+            dir.join("save_0")
+        } else if dir.join("game_data.sav").is_file() {
+            return vec![0];
+        } else {
+            dir.clone()
+        };
+
+        let Ok(entries) = std::fs::read_dir(profile) else {
+            return Vec::new();
+        };
+        let mut slots: Vec<usize> = entries
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let name = name.to_str()?;
+                if name.is_empty() || !name.chars().all(|character| character.is_ascii_digit()) {
+                    return None;
+                }
+                let slot = name.parse().ok()?;
+                entry.path().join("game_data.sav").is_file().then_some(slot)
+            })
+            .collect();
+        slots.sort_unstable();
+        slots.dedup();
+        slots
+    }
+
+    /// Resolve a discovered slot directory in local/LAN mode.
+    pub fn save_slot_dir(&self, slot: usize) -> Option<PathBuf> {
         if self.mode == Mode::Hub {
             return None;
         }
         let dir = self.save_dir.as_ref()?;
-        let slot = slot.to_string();
-        [
-            dir.join("save_0").join(&slot).join("game_data.sav"),
-            dir.join(&slot).join("game_data.sav"),
-            dir.join("game_data.sav"),
-        ]
-        .into_iter()
-        .find(|path| path.is_file())
+
+        if dir.join("save_0").is_dir() {
+            let slot_dir = dir.join("save_0").join(slot.to_string());
+            return slot_dir.join("game_data.sav").is_file().then_some(slot_dir);
+        }
+        if dir.join("game_data.sav").is_file() {
+            return (slot == 0).then(|| dir.clone());
+        }
+
+        let slot_dir = dir.join(slot.to_string());
+        slot_dir.join("game_data.sav").is_file().then_some(slot_dir)
+    }
+
+    /// Resolve the `game_data.sav` for a discovered slot.
+    pub fn save_slot_path(&self, slot: usize) -> Option<PathBuf> {
+        self.save_slot_dir(slot)
+            .map(|directory| directory.join("game_data.sav"))
+    }
+
+    /// Resolve the summary caption for a discovered slot.
+    pub fn save_caption_path(&self, slot: usize) -> Option<PathBuf> {
+        self.save_slot_dir(slot)
+            .map(|directory| directory.join("caption.sav"))
+    }
+
+    /// Resolve the screenshot for a discovered slot.
+    pub fn save_caption_image_path(&self, slot: usize) -> Option<PathBuf> {
+        self.save_slot_dir(slot)
+            .map(|directory| directory.join("caption.jpg"))
     }
 }
 
@@ -156,10 +214,12 @@ fn is_save_root(path: &Path) -> bool {
     if !path.is_dir() {
         return false;
     }
-    // A save root contains save_0 or is itself a profile folder with numbered
-    // slots. Accept either so users can point at ~/.../savagewind/save or at
-    // the save_0 folder itself.
+    // A save root contains save_0; a profile folder contains numbered slots;
+    // the innermost layout is a single slot folder with game_data.sav.
     if path.join("save_0").is_dir() {
+        return true;
+    }
+    if path.join("game_data.sav").is_file() {
         return true;
     }
     std::fs::read_dir(path)
@@ -167,7 +227,13 @@ fn is_save_root(path: &Path) -> bool {
         .into_iter()
         .flatten()
         .flatten()
-        .any(|entry| entry.file_name().to_string_lossy() == "0" && entry.path().is_dir())
+        .any(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            !name.is_empty()
+                && name.chars().all(|character| character.is_ascii_digit())
+                && entry.path().join("game_data.sav").is_file()
+        })
 }
 
 #[cfg(test)]
@@ -192,39 +258,73 @@ mod tests {
         }
     }
 
+    fn temp_root(name: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("wayfinder-save-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn write_slot(directory: &Path) {
+        std::fs::create_dir_all(directory).unwrap();
+        std::fs::write(directory.join("game_data.sav"), b"test").unwrap();
+    }
+
     #[test]
     fn hub_has_no_filesystem_save_exposure() {
         let config = test_config(Mode::Hub, Some(PathBuf::from("/private/save")));
         assert_eq!(config.save_dir_for_display(), None);
+        assert!(config.save_slots().is_empty());
         assert_eq!(config.save_slot_path(0), None);
+        assert_eq!(config.save_caption_path(0), None);
     }
 
     #[test]
-    fn resolves_save_root_and_save_0_layouts() {
-        let root = std::env::temp_dir().join(format!("wayfinder-save-slot-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("save_0/3")).unwrap();
-        std::fs::write(root.join("save_0/3/game_data.sav"), b"test").unwrap();
+    fn discovers_and_sorts_numbered_slots() {
+        let root = temp_root("slots");
+        for slot in ["10", "0", "3"] {
+            write_slot(&root.join("save_0").join(slot));
+        }
+        std::fs::create_dir_all(root.join("save_0/not-a-slot")).unwrap();
+        std::fs::write(root.join("save_0/not-a-slot/game_data.sav"), b"test").unwrap();
+        std::fs::create_dir_all(root.join("save_0/7")).unwrap();
 
         let root_config = test_config(Mode::Local, Some(root.clone()));
+        assert_eq!(root_config.save_slots(), vec![0, 3, 10]);
         assert_eq!(
             root_config.save_slot_path(3),
             Some(root.join("save_0/3/game_data.sav"))
         );
+        assert_eq!(root_config.save_slot_path(7), None);
+        assert_eq!(
+            root_config.save_caption_path(3),
+            Some(root.join("save_0/3/caption.sav"))
+        );
+        assert_eq!(
+            root_config.save_caption_image_path(3),
+            Some(root.join("save_0/3/caption.jpg"))
+        );
 
         let save_0_config = test_config(Mode::Local, Some(root.join("save_0")));
+        assert_eq!(save_0_config.save_slots(), vec![0, 3, 10]);
         assert_eq!(
             save_0_config.save_slot_path(3),
             Some(root.join("save_0/3/game_data.sav"))
         );
 
-        std::fs::create_dir_all(root.join("direct")).unwrap();
-        std::fs::write(root.join("direct/game_data.sav"), b"test").unwrap();
-        let direct_config = test_config(Mode::Local, Some(root.join("direct")));
-        assert_eq!(
-            direct_config.save_slot_path(3),
-            Some(root.join("direct/game_data.sav"))
-        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn treats_a_direct_slot_folder_as_slot_zero() {
+        let root = temp_root("direct");
+        write_slot(&root);
+
+        let config = test_config(Mode::Local, Some(root.clone()));
+        assert_eq!(config.save_slots(), vec![0]);
+        assert_eq!(config.save_slot_path(0), Some(root.join("game_data.sav")));
+        assert_eq!(config.save_slot_path(1), None);
 
         std::fs::remove_dir_all(root).unwrap();
     }

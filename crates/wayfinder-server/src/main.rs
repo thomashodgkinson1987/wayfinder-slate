@@ -1,5 +1,6 @@
 mod config;
 mod http;
+mod saves;
 
 use std::sync::Arc;
 
