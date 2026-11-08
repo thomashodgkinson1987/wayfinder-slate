@@ -17,6 +17,7 @@
 //! turns bytes into a queryable save and leaves policy to callers.
 
 pub mod keys;
+pub mod treasure_hashes;
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -264,6 +265,8 @@ pub const TOWER_TOTAL: usize = 15;
 pub const KOROK_TOTAL: usize = 900;
 /// Total picture memories tracked by `IsGet_MemoryPhoto_000..013`.
 pub const MEMORY_TOTAL: usize = 14;
+/// Total treasure chests tracked by the `MainField_TBox_Field_*` flags.
+pub const TREASURE_TOTAL: usize = treasure_hashes::TREASURE_TOTAL;
 
 /// Completion summary for a save file.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -274,6 +277,7 @@ pub struct CompletionSummary {
     pub memories: CompletionCount,
     pub locations: CompletionCount,
     pub enemies: CompletionCount,
+    pub treasures: CompletionCount,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -399,6 +403,15 @@ impl SaveFile {
         self.get_u32(key).map(|v| v != 0).unwrap_or(false)
     }
 
+    /// Check if a save key is set (non-zero).
+    ///
+    /// Treasure chest flags are addressed by their CRC32 hash rather than by
+    /// name, because the chest flag names embed their placement id and no
+    /// public table maps those names back to the flag hashes.
+    pub fn is_key_set(&self, key: u32) -> bool {
+        self.get_u32(key).map(|v| v != 0).unwrap_or(false)
+    }
+
     /// Get completion summary for all tracked object types.
     pub fn completion_summary(&self) -> CompletionSummary {
         // Shrines: Clear_Dungeon000..135 (136 completable)
@@ -419,6 +432,12 @@ impl SaveFile {
         // summary cannot drift from the data.
         let (location_completed, location_total) = self.location_progress();
         let (enemy_completed, enemy_total) = self.enemy_progress();
+        // Treasure chests are addressed by their CRC32 hash, because the chest
+        // flag names embed their placement id rather than a readable name.
+        let treasure_completed = treasure_hashes::TREASURE_HASHES
+            .iter()
+            .filter(|&&hash| self.is_key_set(hash))
+            .count();
 
         CompletionSummary {
             shrines: CompletionCount::new(SHRINE_TOTAL, shrine_completed),
@@ -427,6 +446,7 @@ impl SaveFile {
             memories: CompletionCount::new(MEMORY_TOTAL, memory_completed),
             locations: CompletionCount::new(location_total, location_completed),
             enemies: CompletionCount::new(enemy_total, enemy_completed),
+            treasures: CompletionCount::new(TREASURE_TOTAL, treasure_completed),
         }
     }
 
@@ -899,9 +919,34 @@ mod tests {
         assert_eq!(summary.memories.total, MEMORY_TOTAL);
         assert_eq!(summary.locations.total, 187);
         assert_eq!(summary.enemies.total, 84);
+        assert_eq!(summary.treasures.total, TREASURE_TOTAL);
         assert_eq!(summary.shrines.completed, 0);
         assert_eq!(summary.locations.completed, 0);
         assert_eq!(summary.enemies.completed, 0);
+        assert_eq!(summary.treasures.completed, 0);
+    }
+
+    #[test]
+    fn counts_opened_treasure_chests() {
+        // Treasure flags are addressed by their CRC32 hash rather than by name.
+        let opened = treasure_hashes::TREASURE_HASHES[0];
+        let save = SaveFile::parse(build(VERSION_1_9_0, &[(opened, 1)])).unwrap();
+
+        let summary = save.completion_summary();
+        assert_eq!(summary.treasures.completed, 1);
+        assert_eq!(summary.treasures.total, TREASURE_TOTAL);
+
+        // A chest flag that is present but zero still counts as unopened.
+        let save = SaveFile::parse(build(VERSION_1_9_0, &[(opened, 0)])).unwrap();
+        assert_eq!(save.completion_summary().treasures.completed, 0);
+    }
+
+    #[test]
+    fn treasure_hashes_are_unique() {
+        let mut sorted = treasure_hashes::TREASURE_HASHES.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), treasure_hashes::TREASURE_HASHES.len());
     }
 
     #[test]

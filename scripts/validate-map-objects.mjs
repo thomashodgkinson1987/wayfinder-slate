@@ -10,7 +10,9 @@
  * - shrine, tower, and memory flags follow the sequences the save parser reads;
  * - flags are unique within each type;
  * - coordinates are finite and inside the Breath of the Wild world;
- * - each type carries the fields used to label its markers.
+ * - each type carries the fields used to label its markers;
+ * - the treasure chests match the committed chest flag table, and the three
+ *   gambling mini-game chests that have no save flag are absent.
  *
  * Run with `node scripts/validate-map-objects.mjs`.
  */
@@ -20,6 +22,8 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DATASET_PATH = path.join(ROOT, 'frontend/static/data/map_objects.json');
+const TREASURE_FLAGS_PATH = path.join(ROOT, 'scripts/treasure-flags.json');
+const TREASURE_HASHES_PATH = path.join(ROOT, 'crates/wayfinder-save/src/treasure_hashes.rs');
 
 const EXPECTED_TOTALS = {
   shrines: 136,
@@ -29,6 +33,14 @@ const EXPECTED_TOTALS = {
   locations: 187,
   enemies: 84,
 };
+
+/**
+ * Treasure chests are joined by their save-flag hash rather than by flag name,
+ * so they are checked separately. The count is the 1315 static chest placements
+ * minus the three gambling mini-game chests, which have no save flag.
+ */
+const EXPECTED_TREASURES = 1312;
+const GAMBLE_CHESTS = ['Treasure0055', 'Treasure0056', 'Treasure0057'];
 
 const COORDINATE_LIMIT = 6000;
 
@@ -84,6 +96,17 @@ function checkLabel(type, object, where) {
   }
 }
 
+function checkCoordinates(object, where) {
+  for (const axis of ['x', 'z']) {
+    const value = object[axis];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      fail(`${where}: expected a finite ${axis} coordinate`);
+    } else if (Math.abs(value) > COORDINATE_LIMIT) {
+      fail(`${where}: ${axis}=${value} is outside ±${COORDINATE_LIMIT}`);
+    }
+  }
+}
+
 const text = await readFile(DATASET_PATH, 'utf8');
 let dataset;
 try {
@@ -93,8 +116,8 @@ try {
   process.exit(1);
 }
 
-if (dataset.version !== 1) {
-  fail(`expected dataset version 1, found ${JSON.stringify(dataset.version)}`);
+if (dataset.version !== 2) {
+  fail(`expected dataset version 2, found ${JSON.stringify(dataset.version)}`);
 }
 
 if (dataset.source === null || typeof dataset.source !== 'object') {
@@ -127,19 +150,102 @@ for (const [type, expectedTotal] of Object.entries(EXPECTED_TOTALS)) {
       seenFlags.add(object.flag);
     }
 
-    for (const axis of ['x', 'z']) {
-      const value = object[axis];
-      if (typeof value !== 'number' || !Number.isFinite(value)) {
-        fail(`${where}: expected a finite ${axis} coordinate`);
-      } else if (Math.abs(value) > COORDINATE_LIMIT) {
-        fail(`${where}: ${axis}=${value} is outside ±${COORDINATE_LIMIT}`);
-      }
-    }
+    checkCoordinates(object, where);
 
     checkLabel(type, object, where);
   });
 
   checkFlagSequence(type, objects);
+}
+
+// Treasure chests carry a marker id and a category instead of a flag name.
+const treasures = dataset.treasures;
+const treasureIds = new Set();
+if (!Array.isArray(treasures)) {
+  fail('treasures: expected an array');
+} else {
+  if (treasures.length !== EXPECTED_TREASURES) {
+    fail(`treasures: expected ${EXPECTED_TREASURES} objects, found ${treasures.length}`);
+  }
+
+  treasures.forEach((object, index) => {
+    const where = `treasures[${index}]`;
+    if (object === null || typeof object !== 'object' || Array.isArray(object)) {
+      fail(`${where}: expected an object`);
+      return;
+    }
+
+    if (!isText(object.id)) {
+      fail(`${where}: expected a non-empty id`);
+    } else if (treasureIds.has(object.id)) {
+      fail(`${where}: duplicate id ${object.id}`);
+    } else {
+      treasureIds.add(object.id);
+    }
+
+    if (!isText(object.name)) fail(`${where}: expected a non-empty name`);
+    if (!isText(object.group)) fail(`${where}: expected a non-empty group`);
+
+    checkCoordinates(object, where);
+  });
+
+  for (const gamble of GAMBLE_CHESTS) {
+    if (treasureIds.has(gamble)) {
+      fail(`treasures: ${gamble} is a gambling chest and has no save flag`);
+    }
+  }
+
+  // The dataset and the flag table are generated from the same source, so the
+  // marker ids they carry must agree exactly.
+  let flagDocument;
+  try {
+    flagDocument = JSON.parse(await readFile(TREASURE_FLAGS_PATH, 'utf8'));
+  } catch (error) {
+    fail(`could not read ${path.relative(ROOT, TREASURE_FLAGS_PATH)}: ${error.message}`);
+  }
+  if (flagDocument) {
+    const flaggedIds = new Set(Object.values(flagDocument.treasure ?? {}));
+    const missing = [...flaggedIds].filter((id) => !treasureIds.has(id));
+    const extra = [...treasureIds].filter((id) => !flaggedIds.has(id));
+    if (missing.length > 0) {
+      fail(`treasures: ${missing.length} chest(s) missing from the dataset, first: ${missing[0]}`);
+    }
+    if (extra.length > 0) {
+      fail(`treasures: ${extra.length} chest(s) not in the flag table, first: ${extra[0]}`);
+    }
+
+    // The Rust save parser counts opened chests from a generated hash list, so
+    // that list must cover exactly the hashes in the flag table.
+    const rustPath = TREASURE_HASHES_PATH;
+    let rustSource;
+    try {
+      rustSource = await readFile(rustPath, 'utf8');
+    } catch (error) {
+      fail(`could not read ${path.relative(ROOT, rustPath)}: ${error.message}`);
+    }
+    if (rustSource !== undefined) {
+      const rustHashes = [...rustSource.matchAll(/0x([0-9a-fA-F_]+)/g)].map((match) =>
+        Number.parseInt(match[1].replace(/_/g, ''), 16),
+      );
+      const flagHashes = Object.keys(flagDocument.treasure ?? {}).map(Number);
+
+      if (rustHashes.length !== flagHashes.length) {
+        fail(
+          `treasures: the save parser tracks ${rustHashes.length} chest flag(s) ` +
+            `but the flag table has ${flagHashes.length}`,
+        );
+      }
+
+      const rustSet = new Set(rustHashes);
+      const missingHashes = flagHashes.filter((hash) => !rustSet.has(hash));
+      if (missingHashes.length > 0) {
+        fail(
+          `treasures: ${missingHashes.length} chest flag(s) missing from the save parser, ` +
+            `first: ${missingHashes[0]}`,
+        );
+      }
+    }
+  }
 }
 
 if (failures.length > 0) {
@@ -148,7 +254,8 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-const summary = Object.entries(EXPECTED_TOTALS)
-  .map(([type, total]) => `${total} ${type}`)
-  .join(', ');
+const summary = [
+  ...Object.entries(EXPECTED_TOTALS).map(([type, total]) => `${total} ${type}`),
+  `${EXPECTED_TREASURES} treasures`,
+].join(', ');
 console.log(`map object dataset OK: ${summary}`);

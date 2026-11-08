@@ -350,7 +350,12 @@ Completion rules:
 - **Towers:** `MapTower_XX` flags; map tower numbers to tower markers.
 - **Memories:** `IsGet_MemoryPhoto_XXX` flags; map `MemoryXX` markers.
 - **Divine Beasts:** relevant dungeon/quest flags; coordinates supplied separately.
-- **Quests and treasure:** optional later phases.
+- **Treasure chests:** `MainField_TBox_Field_*` flags, addressed by their CRC32
+  hash rather than by name, because the chest flag names embed their placement
+  id. The hash-to-marker table lives in `scripts/treasure-flags.json` and
+  covers 1312 chests: the 1315 static chest placements minus the three casino
+  gambling mini-game chests, which have no save flag.
+- **Quests:** optional later phase.
 
 The join must be generated/tested offline and committed as a small static JSON
 artifact, not computed from game files at runtime.

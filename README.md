@@ -102,7 +102,7 @@ crates/wayfinder-control/  Savage Wind control socket client
 crates/wayfinder-server/   axum web server and embedded UI
 crates/wayfinder-agent/    outbound live-telemetry agent
 frontend/                  Svelte 5 + Vite + Leaflet UI
-scripts/                   Map asset fetch and verification
+scripts/                   Map asset fetch, dataset build, and verification
 docs/PLAN.md               Architecture and milestones
 ```
 

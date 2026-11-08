@@ -32,7 +32,15 @@
     label: string;
   }
 
-  const OBJECT_TYPES = ['shrine', 'tower', 'memory', 'korok', 'location', 'enemy'] as const;
+  const OBJECT_TYPES = [
+    'shrine',
+    'tower',
+    'memory',
+    'korok',
+    'location',
+    'enemy',
+    'treasure',
+  ] as const;
 
   const STYLES: Record<MapObjectType, CategoryStyle> = {
     shrine: {
@@ -77,6 +85,13 @@
       color: '#ff6b6b',
       label: 'Enemies',
     },
+    treasure: {
+      icon: 'treasure',
+      width: 30,
+      height: 26,
+      color: '#e08b3c',
+      label: 'Chests',
+    },
   };
 
   let mapEl: HTMLDivElement | undefined = $state();
@@ -88,6 +103,7 @@
   let showKoroks = $state(false);
   let showLocations = $state(false);
   let showEnemies = $state(false);
+  let showTreasures = $state(false);
   let counts = $state<Record<MapObjectType, number>>({
     shrine: 0,
     tower: 0,
@@ -95,6 +111,7 @@
     korok: 0,
     location: 0,
     enemy: 0,
+    treasure: 0,
   });
 
   const groups: Partial<Record<MapObjectType, L.LayerGroup>> = {};
@@ -162,6 +179,7 @@
         korok: dataset.koroks,
         location: dataset.locations,
         enemy: dataset.enemies,
+        treasure: dataset.treasures,
       };
 
       for (const type of OBJECT_TYPES) {
@@ -202,21 +220,25 @@
       case 'shrine':
       case 'tower':
       case 'memory':
-        return object.name ?? object.flag;
+        return object.name ?? object.flag ?? 'Unknown';
       case 'korok':
         return object.seed
           ? `Korok Seed ${object.seed.replace(/^Seed/, '')}`
-          : object.loc ?? object.flag;
+          : (object.loc ?? object.flag ?? 'Unknown Korok');
       case 'location':
-        return object.match_name ?? object.flag;
+        return object.match_name ?? object.flag ?? 'Unknown location';
       case 'enemy':
         return object.type ?? 'Enemy';
+      case 'treasure':
+        return object.name ?? 'Treasure';
     }
   }
 
   /// Secondary line shown under a marker's title in its popup.
   function markerDetail(type: MapObjectType, object: MapObject): string | null {
-    return type === 'korok' ? (object.loc ?? null) : null;
+    if (type === 'korok') return object.loc ?? null;
+    if (type === 'treasure') return object.group ?? null;
+    return null;
   }
 
   function getVisibility(type: MapObjectType): boolean {
@@ -233,6 +255,8 @@
         return showLocations;
       case 'enemy':
         return showEnemies;
+      case 'treasure':
+        return showTreasures;
     }
   }
 
@@ -325,6 +349,13 @@ npm --prefix frontend run build</pre>
       <span class="count">{counts.enemy || '—'}</span>
     </label>
 
+    <label class="layer-toggle">
+      <input type="checkbox" bind:checked={showTreasures} onchange={syncLayers} />
+      <span class="swatch" style="background: #e08b3c"></span>
+      <span>Chests</span>
+      <span class="count">{counts.treasure || '—'}</span>
+    </label>
+
     <div class="panel-divider"></div>
 
     {#if completion}
@@ -358,6 +389,11 @@ npm --prefix frontend run build</pre>
           <span class="swatch" style="background: #ff6b6b"></span>
           <span>Enemies</span>
           <span class="count">{completion.enemies.completed}/{completion.enemies.total}</span>
+        </span>
+        <span class="completion-row">
+          <span class="swatch" style="background: #e08b3c"></span>
+          <span>Chests</span>
+          <span class="count">{completion.treasures.completed}/{completion.treasures.total}</span>
         </span>
       </div>
     {/if}

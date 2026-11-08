@@ -22,6 +22,7 @@
     { label: 'Korok seeds', key: 'koroks' },
     { label: 'Sheikah towers', key: 'towers' },
     { label: 'Recovered memories', key: 'memories' },
+    { label: 'Treasure chests', key: 'treasures' },
   ];
 
   let captionError = $state(false);

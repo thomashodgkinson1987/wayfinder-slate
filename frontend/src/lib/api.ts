@@ -22,6 +22,7 @@ export interface CompletionSummary {
   memories: CompletionCount;
   locations: CompletionCount;
   enemies: CompletionCount;
+  treasures: CompletionCount;
 }
 
 export interface HeartStats {
@@ -67,10 +68,18 @@ export interface SlotDetail extends SlotSummary {
   completion: CompletionSummary;
 }
 
-export type MapObjectType = 'shrine' | 'tower' | 'korok' | 'memory' | 'location' | 'enemy';
+export type MapObjectType =
+  | 'shrine'
+  | 'tower'
+  | 'korok'
+  | 'memory'
+  | 'location'
+  | 'enemy'
+  | 'treasure';
 
 export interface MapObject {
-  flag: string;
+  /** Save flag name. Treasure chests are hash-addressed and carry an `id` instead. */
+  flag?: string;
   x: number;
   z: number;
   name?: string;
@@ -80,6 +89,8 @@ export interface MapObject {
   type?: string;
   match_name?: string;
   icon?: string;
+  id?: string;
+  group?: string;
 }
 
 export interface MapObjectsDataset {
@@ -91,6 +102,7 @@ export interface MapObjectsDataset {
   memories: MapObject[];
   locations: MapObject[];
   enemies: MapObject[];
+  treasures: MapObject[];
 }
 
 export async function getConfig(): Promise<AppConfig> {

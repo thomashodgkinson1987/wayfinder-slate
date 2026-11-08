@@ -54,6 +54,8 @@ fn real_save_completion_summary() {
     assert_eq!(summary.locations.completed, 18); // 18 known locations discovered
     assert_eq!(summary.enemies.total, 84);
     assert_eq!(summary.enemies.completed, 1); // 1 Talus Junior defeated
+    assert_eq!(summary.treasures.total, 1312);
+    assert_eq!(summary.treasures.completed, 112); // 112 treasure chests opened
 }
 
 /// Verify the player stats and caption metadata match the development save.

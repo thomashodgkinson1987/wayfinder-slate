@@ -26,8 +26,8 @@ repository.
 
 Sources:
 - **Zelda Dungeon markers** (shrines, towers, Korok seeds, memories, locations,
-  enemies): <https://github.com/zeldadungeon/maps> — no licence declared, used
-  with attribution.
+  enemies, treasure chests): <https://github.com/zeldadungeon/maps> — no licence
+  declared, used with attribution.
 - **Save flag names, coordinates, and object lists** (shrines, towers, Koroks,
   locations, enemies): <https://github.com/marcrobledo/savegame-editors> — MIT
   licensed (Copyright 2017–2023 Marc Robledo). Uses `zelda-botw.data.js`,
@@ -39,12 +39,31 @@ Sources:
 The generated dataset (`map_objects.json`) is original work by the Wayfinder
 Slate authors derived from the above sources.
 
+## Treasure chest flag table (`scripts/treasure-flags.json`)
+
+This table maps CRC32 save-flag hashes to Zelda Dungeon treasure marker ids. It
+is derived data only — it contains no copyrighted asset content — and is
+committed so the dataset and the Rust save parser can be regenerated offline.
+
+Sources:
+- **Chest flag names and hashes**: <https://github.com/marcrobledo/savegame-editors>
+  `zelda-botw.hashes.csv` — MIT licensed (Copyright 2017–2023 Marc Robledo).
+- **Chest placements**: the 1315 static `MainField_TBox_Field_*` chest objects
+  from the public <https://radar.zeldamods.org> object database. The placement
+  ids were read once while generating the table; no runtime access is needed.
+- **Treasure marker ids and positions**: Zelda Dungeon markers, as above.
+
+Regenerate the dataset and the save-parser hash list with
+`node scripts/build-treasure-objects.mjs` after fetching the map assets.
+
 ## Save flag names
 
 Community-maintained CRC32 flag-name data used to interpret save keys derives
 from MIT-licensed Breath of the Wild save research, including
 <https://github.com/marcrobledo/savegame-editors> and related community
-datasets. Only derived key names and mappings are used.
+datasets. Only derived key names and mappings are used. Treasure chest flags are
+addressed by their CRC32 hash rather than by name, because the chest flag names
+embed their placement id.
 
 ## Savage Wind
 

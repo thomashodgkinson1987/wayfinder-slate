@@ -24,6 +24,7 @@
     { label: 'Memories', hint: 'Recovered picture memories' },
     { label: 'Locations', hint: 'Discovered named locations' },
     { label: 'Enemies', hint: 'Defeat counters and medals' },
+    { label: 'Chests', hint: 'Opened treasure chests' },
   ];
 </script>
 
@@ -47,7 +48,8 @@
             Shrines: {completion.shrines.completed}/{completion.shrines.total} ({completion.shrines.percentage.toFixed(1)}%) ·
             Towers: {completion.towers.completed}/{completion.towers.total} ·
             Koroks: {completion.koroks.completed}/{completion.koroks.total} ·
-            Memories: {completion.memories.completed}/{completion.memories.total}
+            Memories: {completion.memories.completed}/{completion.memories.total} ·
+            Chests: {completion.treasures.completed}/{completion.treasures.total}
           {:else if saveError}
             {saveError}
           {:else}
@@ -99,6 +101,11 @@
         <div class="stat-label">Enemies Defeated</div>
         <div class="stat-value">{completion.enemies.completed}/{completion.enemies.total}</div>
         <div class="stat-hint">{completion.enemies.percentage.toFixed(1)}% complete</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Treasure Chests</div>
+        <div class="stat-value">{completion.treasures.completed}/{completion.treasures.total}</div>
+        <div class="stat-hint">{completion.treasures.percentage.toFixed(1)}% complete</div>
       </article>
     {:else}
       {#each planned as item (item.label)}
