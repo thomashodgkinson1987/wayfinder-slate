@@ -16,8 +16,12 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full design and milestones.
 ## Requirements
 
 - Rust 1.85+ (edition 2024)
-- Node.js 20+ and npm
+- Node.js 22.12+ and npm (Node 26 "Lithium" LTS recommended)
 - Git (to clone the repository)
+
+Node.js 25 and newer link against `libatomic` on Linux, so older distributions
+may need the `libatomic1` package installed. See [`.node-version`](.node-version)
+for the version used by CI.
 
 ## Development
 

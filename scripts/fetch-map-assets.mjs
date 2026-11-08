@@ -6,7 +6,7 @@
  * this repository, and are verified against scripts/map-assets.sha256.
  *
  * This script deliberately has no npm dependencies and runs on Windows,
- * Linux, and macOS with Node.js 20+.
+ * Linux, and macOS with Node.js 22.12+.
  */
 import { createHash } from 'node:crypto';
 import {

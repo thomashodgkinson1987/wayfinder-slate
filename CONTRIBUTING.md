@@ -35,7 +35,11 @@ Use clear, conventional commit messages such as `feat:`, `fix:`, `docs:`,
 
 ## Development setup
 
-Requirements: Rust 1.85+, Node.js 20+, and npm.
+Requirements: Rust 1.85+, Node.js 22.12+ (Node 26 "Lithium" recommended), and npm.
+
+The repository ships a [`.node-version`](.node-version) file, so version managers
+such as fnm, nodenv, or asdf pick up the recommended Node.js release
+automatically.
 
 ```sh
 # Map assets (~50 MB, downloaded and checksum-verified; not committed)
