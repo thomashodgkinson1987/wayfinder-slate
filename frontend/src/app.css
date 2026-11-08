@@ -291,6 +291,80 @@ pre {
   border-color: rgba(227, 189, 109, 0.4);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.slot-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.slot-picker-label {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.slot-picker select {
+  min-width: 170px;
+  padding: 7px 30px 7px 11px;
+  border: 1px solid var(--line-bright);
+  border-radius: var(--radius-sm);
+  background: var(--panel-solid);
+  color: var(--text-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.slot-picker select:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.refresh-button {
+  width: 31px;
+  height: 31px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-bright);
+  border-radius: var(--radius-sm);
+  background: var(--panel-solid);
+  color: var(--text-soft);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.refresh-button:hover:not(:disabled) {
+  background: rgba(93, 219, 234, 0.1);
+  border-color: rgba(93, 219, 234, 0.35);
+  color: var(--cyan);
+}
+
+.refresh-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.notice.error {
+  border-color: rgba(240, 139, 139, 0.4);
+  background: rgba(50, 19, 22, 0.5);
+}
+
+.notice.error strong {
+  color: var(--danger);
+}
+
 .page-wrap {
   flex: 1;
   min-height: 0;
@@ -823,5 +897,11 @@ pre.command {
     align-items: flex-start;
     flex-direction: column;
     gap: 9px;
+  }
+  .topbar-actions {
+    flex-wrap: wrap;
+  }
+  .slot-picker select {
+    min-width: 140px;
   }
 }

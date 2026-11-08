@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getConfig, type AppConfig } from './lib/api';
+  import {
+    getConfig,
+    getSlot,
+    getSlots,
+    type AppConfig,
+    type SlotDetail,
+    type SlotSummary,
+  } from './lib/api';
   import Dashboard from './pages/Dashboard.svelte';
   import MapView from './pages/MapView.svelte';
   import PlayData from './pages/PlayData.svelte';
@@ -34,10 +41,18 @@
     },
   };
 
+  const SLOT_STORAGE_KEY = 'wayfinder-slate:selected-slot';
+
   let page = $state<PageId>('dashboard');
   let config = $state<AppConfig | null>(null);
   let error = $state<string | null>(null);
   let retryTimer: ReturnType<typeof setInterval> | null = null;
+  let slots = $state<SlotSummary[]>([]);
+  let selectedSlot = $state<number | null>(null);
+  let summary = $state<SlotDetail | null>(null);
+  let saveError = $state<string | null>(null);
+  let summaryLoading = $state(false);
+  let summaryRequest = 0;
 
   const meta = $derived(PAGE_META[page]);
   const modeLabel = $derived(
@@ -49,6 +64,28 @@
           ? 'LAN'
           : 'Local',
   );
+  const showSlotPicker = $derived(
+    config !== null && config.mode !== 'hub' && slots.length > 0,
+  );
+
+  function readStoredSlot(): number | null {
+    try {
+      const raw = window.localStorage.getItem(SLOT_STORAGE_KEY);
+      if (raw === null) return null;
+      const value = Number(raw);
+      return Number.isInteger(value) ? value : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function storeSlot(slot: number) {
+    try {
+      window.localStorage.setItem(SLOT_STORAGE_KEY, String(slot));
+    } catch {
+      // Storage can be unavailable in private browsing; selection still works.
+    }
+  }
 
   async function loadConfig() {
     try {
@@ -58,9 +95,67 @@
         clearInterval(retryTimer);
         retryTimer = null;
       }
+      await loadSlots();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
+  }
+
+  async function loadSlots() {
+    if (config === null || config.mode === 'hub') {
+      slots = [];
+      selectedSlot = null;
+      summary = null;
+      saveError = null;
+      return;
+    }
+
+    try {
+      const loaded = await getSlots();
+      const wanted = selectedSlot ?? readStoredSlot();
+      const next = loaded.find((slot) => slot.slot === wanted) ?? loaded[0] ?? null;
+
+      slots = loaded;
+      selectedSlot = next?.slot ?? null;
+      if (next !== null) storeSlot(next.slot);
+      await loadSummary();
+    } catch (cause) {
+      saveError = cause instanceof Error ? cause.message : String(cause);
+    }
+  }
+
+  async function loadSummary() {
+    const slot = selectedSlot;
+    if (slot === null) {
+      summary = null;
+      summaryLoading = false;
+      saveError = null;
+      return;
+    }
+
+    const request = ++summaryRequest;
+    if (summary?.slot !== slot) summary = null;
+    summaryLoading = true;
+    saveError = null;
+
+    try {
+      const detail = await getSlot(slot);
+      if (request !== summaryRequest) return;
+      summary = detail;
+    } catch (cause) {
+      if (request !== summaryRequest) return;
+      summary = null;
+      saveError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      if (request === summaryRequest) summaryLoading = false;
+    }
+  }
+
+  function selectSlot(slot: number) {
+    if (slot === selectedSlot) return;
+    selectedSlot = slot;
+    storeSlot(slot);
+    void loadSummary();
   }
 
   onMount(() => {
@@ -126,23 +221,54 @@
         <h1 class="topbar-title">{meta.title}</h1>
         <p class="topbar-subtitle">{meta.subtitle}</p>
       </div>
-      <span
-        class="mode-badge"
-        class:hub={config?.mode === 'hub'}
-        class:lan={config?.mode === 'lan'}
-      >
-        <span class="dot" class:online={config !== null}></span>
-        {modeLabel}
-      </span>
+      <div class="topbar-actions">
+        {#if showSlotPicker}
+          <label class="slot-picker">
+            <span class="slot-picker-label">Save slot</span>
+            <select
+              value={selectedSlot === null ? '' : String(selectedSlot)}
+              onchange={(event) =>
+                selectSlot(Number((event.currentTarget as HTMLSelectElement).value))}
+              disabled={summaryLoading}
+            >
+              {#each slots as slot (slot.slot)}
+                <option value={slot.slot}>{slot.label}</option>
+              {/each}
+            </select>
+          </label>
+          <button
+            type="button"
+            class="refresh-button"
+            onclick={() => void loadSlots()}
+            disabled={summaryLoading}
+            title="Refresh save slots"
+            aria-label="Refresh save slots"
+          >
+            ↻
+          </button>
+        {/if}
+
+        <span
+          class="mode-badge"
+          class:hub={config?.mode === 'hub'}
+          class:lan={config?.mode === 'lan'}
+        >
+          <span class="dot" class:online={config !== null}></span>
+          {modeLabel}
+        </span>
+      </div>
     </header>
 
     <main class="page-wrap" class:map-page={page === 'map'}>
       {#if page === 'dashboard'}
-        <Dashboard {config} />
+        <Dashboard {config} {slots} {summary} {saveError} loading={summaryLoading} />
       {:else if page === 'map'}
-        <MapView mapAssets={config?.map_assets ?? false} />
+        <MapView
+          mapAssets={config?.map_assets ?? false}
+          completion={summary?.completion ?? null}
+        />
       {:else if page === 'play-data'}
-        <PlayData {config} />
+        <PlayData {config} {summary} {saveError} loading={summaryLoading} />
       {:else}
         <Setup {config} />
       {/if}

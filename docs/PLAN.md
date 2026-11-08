@@ -517,7 +517,7 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 - [x] Key ID metadata for core stats and inventory
 - [x] Synthetic fixtures + integration test with 1.9.0 save
 - [x] Flag-to-map-object mapping (shrines, towers, Koroks, memories, locations, enemies)
-- [ ] Slot discovery and caption parsing
+- [x] Slot discovery and caption parsing
 
 ### M3 — Database and auth
 
@@ -536,7 +536,7 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 ### M5 — Dashboard and map
 
 - [x] Completion API and Play Data summary
-- [ ] Dashboard stats and completion
+- [x] Dashboard stats and completion
 - [x] Leaflet custom CRS and tiles
 - [x] Korok/shrine/tower/memory/location/enemy layers
 - [ ] Divine Beast layers (with completion)

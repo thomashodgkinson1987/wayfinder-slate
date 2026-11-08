@@ -11,13 +11,18 @@
   } from '../lib/coords';
   import {
     getMapObjects,
-    getCompletion,
     type CompletionSummary,
     type MapObject,
     type MapObjectType,
   } from '../lib/api';
 
-  let { mapAssets }: { mapAssets: boolean } = $props();
+  let {
+    mapAssets,
+    completion,
+  }: {
+    mapAssets: boolean;
+    completion: CompletionSummary | null;
+  } = $props();
 
   interface CategoryStyle {
     icon: string;
@@ -91,7 +96,6 @@
     location: 0,
     enemy: 0,
   });
-  let completion = $state<CompletionSummary | null>(null);
 
   const groups: Partial<Record<MapObjectType, L.LayerGroup>> = {};
 
@@ -131,7 +135,6 @@
         attribution: '',
       }).addTo(instance);
       void loadMapObjects(instance);
-      void loadCompletion();
     }
 
     map = instance;
@@ -182,14 +185,6 @@
       }
     } catch (cause) {
       loadError = cause instanceof Error ? cause.message : String(cause);
-    }
-  }
-
-  async function loadCompletion() {
-    try {
-      completion = await getCompletion();
-    } catch {
-      // Ignore completion errors; markers will show without completion state
     }
   }
 
@@ -354,8 +349,9 @@ npm --prefix frontend run build</pre>
     <div class="panel-divider"></div>
 
     <p class="panel-note">
-      Completion state and Korok layers arrive once save ingestion lands. The map
-      uses x/z; height is shown separately when live telemetry is connected.
+      Completion reflects the selected save slot and updates when you switch
+      slots. The map uses x/z; height is shown separately when live telemetry is
+      connected.
     </p>
   </div>
 

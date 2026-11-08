@@ -1,7 +1,35 @@
 <script lang="ts">
-  import type { AppConfig } from '../lib/api';
+  import type { AppConfig, CompletionSummary, SlotDetail, SlotSummary } from '../lib/api';
+  import SaveStatsRow from '../components/SaveStatsRow.svelte';
+  import { formatMapArea, formatSavedAt } from '../lib/format';
 
-  let { config }: { config: AppConfig | null } = $props();
+  let {
+    config,
+    slots,
+    summary,
+    saveError,
+    loading,
+  }: {
+    config: AppConfig | null;
+    slots: SlotSummary[];
+    summary: SlotDetail | null;
+    saveError: string | null;
+    loading: boolean;
+  } = $props();
+
+  const COMPLETION_CARDS: { label: string; key: keyof CompletionSummary }[] = [
+    { label: 'Shrines', key: 'shrines' },
+    { label: 'Korok seeds', key: 'koroks' },
+    { label: 'Sheikah towers', key: 'towers' },
+    { label: 'Recovered memories', key: 'memories' },
+  ];
+
+  let captionError = $state(false);
+
+  $effect(() => {
+    void summary?.caption_url;
+    captionError = false;
+  });
 
   const modeName = $derived(
     config === null
@@ -23,16 +51,48 @@
           : 'Not configured',
   );
 
-  const saveDone = $derived(config !== null && (config.mode === 'hub' || !!config.save_dir));
+  const saveDone = $derived(slots.length > 0);
   const mapDone = $derived(config?.map_assets === true);
   const liveDone = $derived(config?.live === true);
 
-  const stats = [
-    { label: 'Shrines', hint: 'Awaiting first snapshot' },
-    { label: 'Korok seeds', hint: 'Awaiting first snapshot' },
-    { label: 'Sheikah towers', hint: 'Awaiting first snapshot' },
-    { label: 'Recovered memories', hint: 'Awaiting first snapshot' },
-  ];
+  const completionCards = $derived(
+    COMPLETION_CARDS.map(({ label, key }) => {
+      const count = summary?.completion[key];
+      return {
+        label,
+        value: count ? `${count.completed}/${count.total}` : '—',
+        hint: count
+          ? `${count.percentage.toFixed(1)}% complete`
+          : loading
+            ? 'Loading save…'
+            : saveError
+              ? 'Save unavailable'
+              : 'No save loaded',
+      };
+    }),
+  );
+
+  const activeLabel = $derived(
+    summary?.label ?? (loading ? 'Loading save…' : saveSource),
+  );
+
+  const activeNote = $derived.by(() => {
+    if (!summary) {
+      return (
+        config?.save_dir ??
+        (config?.mode === 'hub' ? 'Uploads and agent sync' : 'Set WAYFINDER_SAVE_DIR')
+      );
+    }
+
+    const area = formatMapArea(summary.map_area);
+    const saved = formatSavedAt(summary.saved_at);
+    return [
+      area || summary.location || `Slot ${summary.slot}`,
+      saved ? `saved ${saved}` : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  });
 </script>
 
 <div class="page">
@@ -57,12 +117,19 @@
             : 'Runs beside Savage Wind'}
         </div>
       </div>
-      <div class="mini-card">
+      <div class="mini-card save-source-card">
+        {#if summary && !captionError}
+          <img
+            class="caption-thumb"
+            src={summary.caption_url}
+            alt={`Screenshot for ${summary.label}`}
+            loading="lazy"
+            onerror={() => (captionError = true)}
+          />
+        {/if}
         <h3>Save source</h3>
-        <div class="mini-value">{saveSource}</div>
-        <div class="mini-note">
-          {config?.save_dir ?? (config?.mode === 'hub' ? 'Uploads and agent sync' : 'Set WAYFINDER_SAVE_DIR')}
-        </div>
+        <div class="mini-value">{activeLabel}</div>
+        <div class="mini-note">{activeNote}</div>
       </div>
       <div class="mini-card">
         <h3>Live navigation</h3>
@@ -74,11 +141,20 @@
     </div>
   </section>
 
+  {#if saveError}
+    <div class="notice error" role="status" style="margin-bottom: 18px">
+      <strong>Save unavailable.</strong>
+      <span>{saveError}</span>
+    </div>
+  {/if}
+
+  <SaveStatsRow stats={summary?.stats ?? null} />
+
   <section class="grid" aria-label="Completion summary">
-    {#each stats as stat (stat.label)}
+    {#each completionCards as stat (stat.label)}
       <article class="stat-card">
         <div class="stat-label">{stat.label}</div>
-        <div class="stat-value">—</div>
+        <div class="stat-value">{stat.value}</div>
         <div class="stat-hint">{stat.hint}</div>
       </article>
     {/each}
@@ -113,8 +189,12 @@
             <div class="check-detail">
               {#if config?.mode === 'hub'}
                 Uploads and agent sync arrive with the save-ingestion milestone.
+              {:else if slots.length > 0}
+                {slots.length} save slot{slots.length === 1 ? '' : 's'} loaded from
+                <code>{config?.save_dir}</code>.
               {:else if config?.save_dir}
-                Found at <code>{config.save_dir}</code>
+                Found at <code>{config?.save_dir}</code>, but no numbered slot
+                contains <code class="inline-code">game_data.sav</code>.
               {:else}
                 Set <code class="inline-code">WAYFINDER_SAVE_DIR</code> to Savage
                 Wind's <code class="inline-code">save</code> folder.
@@ -163,7 +243,7 @@
       <div class="section-head">
         <div>
           <h2>What happens next</h2>
-          <p>The current build is the foundation, not the finished map.</p>
+          <p>The current build reads saves directly; history comes later.</p>
         </div>
       </div>
 
@@ -173,7 +253,8 @@
           <div>
             <div class="timeline-title">Save parser</div>
             <div class="timeline-desc">
-              Typed keys, strings, vectors, inventory, and a 1.9.0 fixture test.
+              Slot discovery, captions, player stats, and completion flags from
+              1.9.0 saves.
             </div>
           </div>
         </div>
@@ -182,7 +263,7 @@
           <div>
             <div class="timeline-title">Save ingestion</div>
             <div class="timeline-desc">
-              Folder watching, debounced snapshots, uploads, and slot discovery.
+              Folder watching, debounced snapshots, uploads, and history.
             </div>
           </div>
         </div>
@@ -191,7 +272,7 @@
           <div>
             <div class="timeline-title">The map</div>
             <div class="timeline-desc">
-              Shrine, tower, memory, and Korok layers with completion filters.
+              Shrine, tower, memory, and Korok layers with selected-slot completion.
             </div>
           </div>
         </div>
@@ -207,12 +288,35 @@
       </div>
 
       <div class="notice" style="margin-top: 16px">
-        <strong>Early build.</strong>
+        <strong>{summary ? 'Save connected.' : 'Early build.'}</strong>
         <span>
-          The UI shell, parser crate, and control client are in place. Save-derived
-          numbers will replace the dashes as ingestion lands.
+          {#if summary}
+            Play time, rupees, hearts, stamina, completion, and the caption screenshot
+            come from the selected slot. Use the picker or refresh after saving
+            in-game; automatic folder watching lands with save ingestion.
+          {:else}
+            The UI shell, parser, and slot discovery are in place. Set
+            <code class="inline-code">WAYFINDER_SAVE_DIR</code> to load a save and
+            replace these placeholders.
+          {/if}
         </span>
       </div>
     </section>
   </div>
 </div>
+
+<style>
+  .save-source-card {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .caption-thumb {
+    width: 100%;
+    max-height: 130px;
+    object-fit: cover;
+    margin-bottom: 10px;
+    border: 1px solid var(--line-bright);
+    border-radius: var(--radius-sm);
+  }
+</style>

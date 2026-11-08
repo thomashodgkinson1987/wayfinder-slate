@@ -1,36 +1,30 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import type { AppConfig } from '../lib/api';
-  import { getCompletion, type CompletionSummary } from '../lib/api';
+  import type { AppConfig, SlotDetail } from '../lib/api';
+  import SaveStatsRow from '../components/SaveStatsRow.svelte';
 
-  let { config }: { config: AppConfig | null } = $props();
+  let {
+    config,
+    summary,
+    saveError,
+    loading,
+  }: {
+    config: AppConfig | null;
+    summary: SlotDetail | null;
+    saveError: string | null;
+    loading: boolean;
+  } = $props();
 
-  let completion = $state<CompletionSummary | null>(null);
-
-  onMount(() => {
-    void loadCompletion();
-  });
-
-  async function loadCompletion() {
-    try {
-      completion = await getCompletion();
-    } catch {
-      // Ignore errors
-    }
-  }
+  const completion = $derived(summary?.completion ?? null);
+  const isHub = $derived(config?.mode === 'hub');
 
   const planned = [
-    { label: 'Play time', hint: 'From the save play-report counters' },
-    { label: 'Rupees', hint: 'Current wallet and lifetime totals' },
     { label: 'Korok seeds', hint: 'Collected out of 900' },
-    { label: 'Shrines', hint: 'Completed out of 120 (plus DLC)' },
+    { label: 'Shrines', hint: 'Completed out of 136' },
     { label: 'Towers', hint: 'Activated Sheikah towers' },
     { label: 'Memories', hint: 'Recovered picture memories' },
-    { label: 'Divine Beasts', hint: 'Main quest progress' },
+    { label: 'Locations', hint: 'Discovered named locations' },
     { label: 'Enemies', hint: 'Defeat counters and medals' },
   ];
-
-  const isHub = $derived(config?.mode === 'hub');
 </script>
 
 <div class="page">
@@ -41,21 +35,38 @@
       </div>
       <div class="progress-copy">
         <span class="eyebrow">Play data</span>
-        <h3>{completion ? 'Save loaded' : 'No snapshots yet'}</h3>
+        <h3>
+          {completion
+            ? (summary?.label ?? 'Save loaded')
+            : loading
+              ? 'Reading save…'
+              : 'No save loaded'}
+        </h3>
         <p>
           {#if completion}
             Shrines: {completion.shrines.completed}/{completion.shrines.total} ({completion.shrines.percentage.toFixed(1)}%) ·
             Towers: {completion.towers.completed}/{completion.towers.total} ·
             Koroks: {completion.koroks.completed}/{completion.koroks.total} ·
             Memories: {completion.memories.completed}/{completion.memories.total}
+          {:else if saveError}
+            {saveError}
           {:else}
-            Once Wayfinder Slate reads a save, this page will show total play time,
-            completion, medals, and a progress timeline built from stored snapshots.
+            Choose a save slot to see play time, wallet, hearts, stamina, and
+            completion from the selected save.
           {/if}
         </p>
       </div>
     </div>
   </section>
+
+  {#if saveError}
+    <div class="notice error" role="status" style="margin-bottom: 18px">
+      <strong>Save unavailable.</strong>
+      <span>{saveError}</span>
+    </div>
+  {/if}
+
+  <SaveStatsRow stats={summary?.stats ?? null} />
 
   <section class="grid" aria-label="Play data summary">
     {#if completion}
@@ -116,8 +127,8 @@
       </p>
       <div class="empty-state" style="min-height: 170px; margin-top: 16px">
         <div>
-          <h3>Waiting for a save snapshot</h3>
-          <p>Medals and titles will appear here automatically.</p>
+          <h3>Medals arrive next</h3>
+          <p>The save already records these flags; readable titles are still to come.</p>
         </div>
       </div>
     </section>
