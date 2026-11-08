@@ -25,3 +25,32 @@ fn parses_real_save_when_configured() {
     assert!(save.get_vec3f(keys::PLAYER_SAVE_POS).is_some());
     assert!(save.get_string(keys::PLAYER_SAVE_POS_MAP_NAME).is_some());
 }
+
+/// Verify completion summary matches expected values from the development save.
+#[test]
+fn real_save_completion_summary() {
+    let Some(path) = std::env::var_os("WAYFINDER_TEST_SAVE")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+    else {
+        eprintln!("skipping: WAYFINDER_TEST_SAVE is not set");
+        return;
+    };
+
+    let save = SaveFile::from_path(&path).expect("parse 1.9.0 save");
+    let summary = save.completion_summary();
+
+    // Expected values from the known save (Faron Stable area, early game)
+    assert_eq!(summary.shrines.total, 136);
+    assert_eq!(summary.shrines.completed, 12); // Clear_Dungeon 7,9,15,17,29,38,41,44,45,47,65,99
+    assert_eq!(summary.towers.total, 15);
+    assert_eq!(summary.towers.completed, 2); // MapTower_07, MapTower_08
+    assert_eq!(summary.koroks.total, 900);
+    assert_eq!(summary.koroks.completed, 72); // from HiddenKorok_Number counter
+    assert_eq!(summary.memories.total, 14);
+    assert_eq!(summary.memories.completed, 1); // IsGet_MemoryPhoto_008
+    assert_eq!(summary.locations.total, 187);
+    assert_eq!(summary.locations.completed, 18); // 18 known locations discovered
+    assert_eq!(summary.enemies.total, 84);
+    assert_eq!(summary.enemies.completed, 1); // 1 Talus Junior defeated
+}

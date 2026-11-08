@@ -18,11 +18,32 @@ data, icons, or other material described below.
   repository. See `scripts/fetch-map-assets.sh`.
 - The Legend of Zelda and Breath of the Wild are trademarks of Nintendo.
 
+## Map object completion dataset (`frontend/static/map/botw/markers/map_objects.json`)
+
+This static dataset joins Zelda Dungeon marker coordinates with save flag names
+from MIT-licensed community data. It is generated offline and committed as a
+build artifact.
+
+Sources:
+- **Zelda Dungeon markers** (shrines, towers, Korok seeds, memories, locations,
+  enemies): <https://github.com/zeldadungeon/maps> — no licence declared, used
+  with attribution.
+- **Save flag names, coordinates, and object lists** (shrines, towers, Koroks,
+  locations, enemies): <https://github.com/marcrobledo/savegame-editors> — MIT
+  licensed (Copyright 2017–2023 Marc Robledo). Uses `zelda-botw.data.js`,
+  `zelda-botw.locations.js`, `zelda-botw.hashes.csv`.
+- **Shrine names by CDungeon number**: <https://github.com/MrCheeze/botw-tools>
+  `text/StaticMsg/Dungeon.xmsbt` — no licence declared; used only as a factual
+  reference for the 136 shrine name mappings.
+
+The generated dataset (`map_objects.json`) is original work by the Wayfinder
+Slate authors derived from the above sources.
+
 ## Save flag names
 
 Community-maintained CRC32 flag-name data used to interpret save keys derives
 from MIT-licensed Breath of the Wild save research, including
-<https://github.com/GingerAvalanche/botw_flag_util> and related community
+<https://github.com/marcrobledo/savegame-editors> and related community
 datasets. Only derived key names and mappings are used.
 
 ## Savage Wind

@@ -9,24 +9,9 @@
     botwBounds,
     createBotwCrs,
   } from '../lib/coords';
+  import { getMapObjects, getCompletion, type CompletionSummary, type MapObject } from '../lib/api';
 
   let { mapAssets }: { mapAssets: boolean } = $props();
-
-  interface MarkerJson {
-    coords: [number, number];
-    id: string;
-    name: string;
-    tags?: string[];
-  }
-
-  interface LayerJson {
-    markers: MarkerJson[];
-  }
-
-  interface CategoryJson {
-    name: string;
-    layers: LayerJson[];
-  }
 
   interface CategoryStyle {
     icon: string;
@@ -37,36 +22,61 @@
   }
 
   const STYLES: Record<string, CategoryStyle> = {
-    'Sheikah Tower': {
-      icon: 'tower',
-      width: 28,
-      height: 39,
-      color: '#e3bd6d',
-      label: 'Towers',
-    },
-    Shrine: {
+    shrine: {
       icon: 'shrine',
       width: 26,
       height: 27,
       color: '#5ddbea',
       label: 'Shrines',
     },
-    Memory: {
+    tower: {
+      icon: 'tower',
+      width: 28,
+      height: 39,
+      color: '#e3bd6d',
+      label: 'Towers',
+    },
+    memory: {
       icon: 'memory',
       width: 30,
       height: 30,
       color: '#b7a7f5',
       label: 'Memories',
     },
+    korok: {
+      icon: 'seed',
+      width: 18,
+      height: 18,
+      color: '#a8e65d',
+      label: 'Korok Seeds',
+    },
+    location: {
+      icon: 'settlement',
+      width: 22,
+      height: 22,
+      color: '#f5d75d',
+      label: 'Locations',
+    },
+    enemy: {
+      icon: 'hinox',
+      width: 24,
+      height: 24,
+      color: '#ff6b6b',
+      label: 'Enemies',
+    },
   };
 
   let mapEl: HTMLDivElement | undefined = $state();
   let map: L.Map | null = null;
   let loadError = $state<string | null>(null);
-  let showTowers = $state(true);
   let showShrines = $state(true);
+  let showTowers = $state(true);
   let showMemories = $state(false);
-  let counts = $state({ tower: 0, shrine: 0, memory: 0 });
+  let showKoroks = $state(false);
+  let showLocations = $state(false);
+  let showEnemies = $state(false);
+  let counts = $state({ shrine: 0, tower: 0, memory: 0, korok: 0, location: 0, enemy: 0 });
+  let completion = $state<CompletionSummary | null>(null);
 
   const groups: Partial<Record<string, L.LayerGroup>> = {};
 
@@ -93,7 +103,7 @@
       .attribution({ position: 'bottomleft', prefix: false })
       .addTo(instance)
       .addAttribution(
-        'Tiles &amp; marker data © <a href="https://www.zeldadungeon.net/breath-of-the-wild-interactive-map">Zelda Dungeon</a> · Wayfinder Slate',
+        'Tiles & marker data © <a href="https://www.zeldadungeon.net/breath-of-the-wild-interactive-map">Zelda Dungeon</a> · Wayfinder Slate',
       );
 
     if (mapAssets) {
@@ -105,7 +115,8 @@
         noWrap: true,
         attribution: '',
       }).addTo(instance);
-      void loadMarkers(instance);
+      void loadMapObjects(instance);
+      void loadCompletion();
     }
 
     map = instance;
@@ -115,21 +126,23 @@
     };
   });
 
-  async function loadMarkers(instance: L.Map) {
+  async function loadMapObjects(instance: L.Map) {
     try {
-      const response = await fetch('/map/botw/markers/pins.json');
-      if (!response.ok) {
-        throw new Error(`marker data returned ${response.status}`);
-      }
-      const categories = (await response.json()) as CategoryJson[];
+      const dataset = await getMapObjects();
+      const objectTypes = ['shrine', 'tower', 'memory', 'korok', 'location', 'enemy'] as const;
+      const datasetMap: Record<string, MapObject[]> = {
+        shrine: dataset.shrines,
+        tower: dataset.towers,
+        memory: dataset.memories,
+        korok: dataset.koroks,
+        location: dataset.locations,
+        enemy: dataset.enemies,
+      };
 
-      let tower = 0;
-      let shrine = 0;
-      let memory = 0;
-
-      for (const category of categories) {
-        const style = STYLES[category.name];
-        if (!style) continue;
+      for (const type of objectTypes) {
+        const objects = datasetMap[type + 's'];
+        const style = STYLES[type];
+        if (!style || objects.length === 0) continue;
 
         const group = L.layerGroup();
         const icon = L.icon({
@@ -139,57 +152,59 @@
           popupAnchor: [0, -style.height + 5],
         });
 
-        for (const layer of category.layers ?? []) {
-          for (const marker of layer.markers ?? []) {
-            L.marker(marker.coords, { icon, title: marker.name })
-              .bindPopup(
-                `<strong>${escapeHtml(marker.name)}</strong>${
-                  marker.tags?.includes('DLC')
-                    ? '<br><span style="opacity:.65">DLC</span>'
-                    : ''
-                }`,
-              )
-              .addTo(group);
-          }
+        for (const obj of objects) {
+          const marker = L.marker([-obj.z, obj.x], { icon, title: obj.name })
+            .bindPopup(
+              `<strong>${escapeHtml(obj.name)}</strong>${obj.dlc ? '<br><span style="opacity:.65">DLC</span>' : ''}`,
+            );
+          marker.addTo(group);
         }
 
-        groups[category.name] = group;
-        const visible =
-          (category.name === 'Sheikah Tower' && showTowers) ||
-          (category.name === 'Shrine' && showShrines) ||
-          (category.name === 'Memory' && showMemories);
+        groups[type] = group;
+        counts[type as keyof typeof counts] = objects.length;
+        const visible = getVisibility(type);
         if (visible) group.addTo(instance);
-
-        if (category.name === 'Sheikah Tower') tower = group.getLayers().length;
-        if (category.name === 'Shrine') shrine = group.getLayers().length;
-        if (category.name === 'Memory') memory = group.getLayers().length;
       }
-
-      counts = { tower, shrine, memory };
     } catch (cause) {
       loadError = cause instanceof Error ? cause.message : String(cause);
     }
   }
 
-  function syncLayers() {
-    if (!map) return;
-    setLayer('Sheikah Tower', showTowers);
-    setLayer('Shrine', showShrines);
-    setLayer('Memory', showMemories);
+  async function loadCompletion() {
+    try {
+      completion = await getCompletion();
+    } catch {
+      // Ignore completion errors; markers will show without completion state
+    }
   }
 
-  function setLayer(name: string, visible: boolean) {
-    const group = groups[name];
-    if (!map || !group) return;
-    if (visible && !map.hasLayer(group)) group.addTo(map);
-    if (!visible && map.hasLayer(group)) map.removeLayer(group);
+  function getVisibility(type: string): boolean {
+    switch (type) {
+      case 'shrine': return showShrines;
+      case 'tower': return showTowers;
+      case 'memory': return showMemories;
+      case 'korok': return showKoroks;
+      case 'location': return showLocations;
+      case 'enemy': return showEnemies;
+      default: return false;
+    }
+  }
+
+  function syncLayers() {
+    if (!map) return;
+    for (const [type, group] of Object.entries(groups)) {
+      if (!group) continue;
+      const visible = getVisibility(type);
+      if (visible && !map.hasLayer(group)) group.addTo(map);
+      if (!visible && map.hasLayer(group)) map.removeLayer(group);
+    }
   }
 
   function escapeHtml(value: string): string {
     return value.replace(
       /[&<>"']/g,
       (character) =>
-        ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[
+        ({ '&': '&', '<': '<', '>': '>', '"': '"', "'": '\'' })[
           character
         ] ?? character,
     );
@@ -241,6 +256,65 @@ npm --prefix frontend run build</pre>
       <span>Memories</span>
       <span class="count">{counts.memory || '—'}</span>
     </label>
+
+    <label class="layer-toggle">
+      <input type="checkbox" bind:checked={showKoroks} onchange={syncLayers} />
+      <span class="swatch" style="background: #a8e65d"></span>
+      <span>Koroks</span>
+      <span class="count">{counts.korok || '—'}</span>
+    </label>
+
+    <label class="layer-toggle">
+      <input type="checkbox" bind:checked={showLocations} onchange={syncLayers} />
+      <span class="swatch" style="background: #f5d75d"></span>
+      <span>Locations</span>
+      <span class="count">{counts.location || '—'}</span>
+    </label>
+
+    <label class="layer-toggle">
+      <input type="checkbox" bind:checked={showEnemies} onchange={syncLayers} />
+      <span class="swatch" style="background: #ff6b6b"></span>
+      <span>Enemies</span>
+      <span class="count">{counts.enemy || '—'}</span>
+    </label>
+
+    <div class="panel-divider"></div>
+
+    {#if completion}
+      <div class="panel-divider"></div>
+      <div class="completion-summary">
+        <span class="completion-row">
+          <span class="swatch" style="background: #5ddbea"></span>
+          <span>Shrines</span>
+          <span class="count">{completion.shrines.completed}/{completion.shrines.total}</span>
+        </span>
+        <span class="completion-row">
+          <span class="swatch" style="background: #e3bd6d"></span>
+          <span>Towers</span>
+          <span class="count">{completion.towers.completed}/{completion.towers.total}</span>
+        </span>
+        <span class="completion-row">
+          <span class="swatch" style="background: #b7a7f5"></span>
+          <span>Memories</span>
+          <span class="count">{completion.memories.completed}/{completion.memories.total}</span>
+        </span>
+        <span class="completion-row">
+          <span class="swatch" style="background: #a8e65d"></span>
+          <span>Koroks</span>
+          <span class="count">{completion.koroks.completed}/{completion.koroks.total}</span>
+        </span>
+        <span class="completion-row">
+          <span class="swatch" style="background: #f5d75d"></span>
+          <span>Locations</span>
+          <span class="count">{completion.locations.completed}/{completion.locations.total}</span>
+        </span>
+        <span class="completion-row">
+          <span class="swatch" style="background: #ff6b6b"></span>
+          <span>Enemies</span>
+          <span class="count">{completion.enemies.completed}/{completion.enemies.total}</span>
+        </span>
+      </div>
+    {/if}
 
     <div class="panel-divider"></div>
 
@@ -352,6 +426,27 @@ npm --prefix frontend run build</pre>
     background: var(--line);
   }
 
+  .completion-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 4px 0;
+  }
+
+  .completion-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11.5px;
+    color: var(--text-soft);
+  }
+
+  .completion-row .count {
+    margin-left: auto;
+    font-weight: 600;
+    color: var(--text);
+  }
+
   .panel-note {
     color: var(--muted);
     font-size: 11px;
@@ -443,6 +538,10 @@ npm --prefix frontend run build</pre>
 
     .layer-toggle {
       padding: 4px 0;
+    }
+
+    .completion-summary {
+      display: none;
     }
 
     .map-status {

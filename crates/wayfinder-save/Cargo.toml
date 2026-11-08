@@ -11,3 +11,4 @@ description = "Breath of the Wild Switch save parser"
 binrw.workspace = true
 crc32fast.workspace = true
 thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }

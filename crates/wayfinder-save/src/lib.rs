@@ -249,6 +249,283 @@ impl SaveFile {
             .filter(|(_, values)| values.iter().any(|value| *value != 0))
             .map(|(key, _)| *key)
     }
+
+    /// Compute CRC32 for a completion flag name.
+    pub fn completion_key(name: &str) -> u32 {
+        Self::key_id(name)
+    }
+}
+
+/// Map object type for completion tracking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MapObjectType {
+    Shrine,
+    Tower,
+    Korok,
+    Memory,
+    Location,
+    Enemy,
+}
+
+/// A map object with its save flag and completion state.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MapObject {
+    pub object_type: MapObjectType,
+    pub name: String,
+    pub flag: String,
+    pub x: f32,
+    pub z: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dlc: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub seed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loc: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enemy_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+}
+
+/// Completion summary for a save file.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompletionSummary {
+    pub shrines: CompletionCount,
+    pub towers: CompletionCount,
+    pub koroks: CompletionCount,
+    pub memories: CompletionCount,
+    pub locations: CompletionCount,
+    pub enemies: CompletionCount,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CompletionCount {
+    pub total: usize,
+    pub completed: usize,
+    pub percentage: f32,
+}
+
+impl CompletionCount {
+    pub fn new(total: usize, completed: usize) -> Self {
+        let percentage = if total > 0 {
+            completed as f32 / total as f32 * 100.0
+        } else {
+            0.0
+        };
+        Self {
+            total,
+            completed,
+            percentage,
+        }
+    }
+}
+
+impl SaveFile {
+    /// Check if a completion flag is set (non-zero).
+    pub fn is_flag_set(&self, flag: &str) -> bool {
+        let key = Self::completion_key(flag);
+        self.get_u32(key).map(|v| v != 0).unwrap_or(false)
+    }
+
+    /// Get completion summary for all tracked object types.
+    pub fn completion_summary(&self) -> CompletionSummary {
+        // Shrines: Clear_Dungeon000..135 (136 completable)
+        let shrine_completed = (0..136).filter(|i| self.is_flag_set(&format!("Clear_Dungeon{:03}", i))).count();
+        // Towers: MapTower_01..15
+        let tower_completed = (1..=15).filter(|i| self.is_flag_set(&format!("MapTower_{:02}", i))).count();
+        // Koroks: MainField_Npc_HiddenKorok* (900)
+        let korok_completed = self.korok_completed();
+        // Memories: IsGet_MemoryPhoto_000..013 (14)
+        let memory_completed = (0..14).filter(|i| self.is_flag_set(&format!("IsGet_MemoryPhoto_{:03}", i))).count();
+        // Locations: Location_* (187)
+        let location_completed = self.location_completed();
+        // Enemies: defeated flags
+        let enemy_completed = self.enemy_completed();
+
+        CompletionSummary {
+            shrines: CompletionCount::new(136, shrine_completed),
+            towers: CompletionCount::new(15, tower_completed),
+            koroks: CompletionCount::new(900, korok_completed),
+            memories: CompletionCount::new(14, memory_completed),
+            locations: CompletionCount::new(187, location_completed),
+            enemies: CompletionCount::new(84, enemy_completed),
+        }
+    }
+
+    fn korok_completed(&self) -> usize {
+        // Use the counter field as a proxy since we don't embed all 900 flag names.
+        // The static dataset should be used for precise per-Korok tracking.
+        self.get_u32(keys::HIDDEN_KOROK_NUMBER).map(|v| v as usize).unwrap_or(0)
+    }
+
+    fn location_completed(&self) -> usize {
+        // Static list of 187 Location_* flag names from marcrobledo data.
+        const LOCATION_FLAGS: &[&str] = &[
+            "Location_AdeyaVillage","Location_AkkareBigBridge","Location_AkkareGarrison",
+            "Location_AkkareZhai","Location_AkkareZhaiBridge","Location_AncientLabo",
+            "Location_Assassin","Location_BigBrotherBridge","Location_BigTree",
+            "Location_BraveFountain","Location_BrosRock","Location_CelebrationPark",
+            "Location_CentralExchange","Location_ChirakaVillage","Location_Cohorint",
+            "Location_Cokiri","Location_Corosseo","Location_DeathMountainHatago",
+            "Location_DeathMountain_Entrance","Location_DodoraBridge","Location_DragonMarsh",
+            "Location_EastDam","Location_EastGerudoRuins","Location_EastPostTownRuin",
+            "Location_Execution","Location_EzzuBridge","Location_FaronHatago000",
+            "Location_FaronHatago001","Location_FaronHatago002","Location_FironeForestEntrance",
+            "Location_FlamingoSpa","Location_FloriaBridge","Location_FlowerSandbank",
+            "Location_ForestHatago","Location_FrontGatePosttown","Location_GameBalling",
+            "Location_GameBitalockGolf","Location_GameGutsCriff","Location_GameMarathon",
+            "Location_GameShiledSurf","Location_GameYabusame","Location_GameZarashiRace",
+            "Location_GarakishiVillage","Location_GatakaraGarrison","Location_Gerudo",
+            "Location_GerudoCanyon_Entrance","Location_GerudoDesert_Entrance",
+            "Location_GerudoFossil","Location_GerudoHatago","Location_Goron",
+            "Location_GoronBridge","Location_GutinizaPlainTomb","Location_HachijoBridge",
+            "Location_Hateno","Location_HatenoGate","Location_HatenoLabo",
+            "Location_HeburaFossil","Location_HeburaLodge","Location_HopesPlateau",
+            "Location_HyralBridge","Location_HyruleCastle","Location_HyruleCastleTown",
+            "Location_HyruleCastle_Hall_0","Location_HyruleCastle_Hall_1",
+            "Location_HyruleCastle_Hall_2","Location_HyruleCastle_Room_0",
+            "Location_HyruleCastle_Room_1","Location_HyruleCastle_Room_10",
+            "Location_HyruleCastle_Room_11","Location_HyruleCastle_Room_2",
+            "Location_HyruleCastle_Room_3","Location_HyruleCastle_Room_5",
+            "Location_HyruleCastle_Room_6","Location_HyruleCastle_Room_7",
+            "Location_HyruleCastle_Room_8","Location_HyruleCastle_Room_9",
+            "Location_HyruleCentralPlace","Location_HyruleDepthHatago",
+            "Location_HyruleGarrison","Location_HyruleGround","Location_HyruleLabo",
+            "Location_HyrulePark","Location_HyrulePlace","Location_HyruleTemple",
+            "Location_HyruleWater","Location_HyruleWestHatago","Location_IceHouse",
+            "Location_JogoBridge","Location_JokuBridge","Location_Kakariko",
+            "Location_KaturaCastle","Location_KingValley","Location_KingfisherSpa",
+            "Location_KochuBridge","Location_KumSpa","Location_KunaiBridge",
+            "Location_LanayruEastEntrance","Location_LanayruWestEntrance",
+            "Location_LeMarbeBridge","Location_LightningPlateau","Location_LittleBrotherBridge",
+            "Location_LomeiIslands","Location_LostForest","Location_MapTower01",
+            "Location_MapTower02","Location_MapTower03","Location_MapTower04",
+            "Location_MapTower05","Location_MapTower06","Location_MapTower07",
+            "Location_MapTower08","Location_MapTower09","Location_MapTower10",
+            "Location_MapTower11","Location_MapTower12","Location_MapTower13",
+            "Location_MapTower14","Location_MapTower15","Location_MaronSpring",
+            "Location_MarritaExchange","Location_MasazuBridge","Location_MinakkareBridge",
+            "Location_MinakkareBridgeEast","Location_MinakkareBridgeWest","Location_Mine",
+            "Location_NantanCastle","Location_NishojiBridge","Location_NorthHatelHatago",
+            "Location_Oasis","Location_OrdinBridge","Location_OrdinFossil",
+            "Location_OsanjoBridge","Location_PostTownRuin","Location_PowerFountain",
+            "Location_RemainsElectric","Location_RemainsFire","Location_RemainsWater",
+            "Location_RemainsWind","Location_RirikendoBridge","Location_Rito",
+            "Location_RitoHatago","Location_RiverSideHatago","Location_RonronCity",
+            "Location_SaihokuCastle","Location_SarjonBridge","Location_ShichijoBridge",
+            "Location_ShigonDam","Location_ShijoBridge","Location_ShinyarkiVillage",
+            "Location_SnowStatue","Location_SojijiPark","Location_SotonkaBridge",
+            "Location_SouthGerudoLegacy","Location_SouthMine","Location_StartPoint",
+            "Location_StonePillers","Location_SusukadiBridge","Location_TabantaBridge",
+            "Location_TabantaBridgeHatago","Location_TabantaCrater","Location_TabantaHatago",
+            "Location_TabantaVillage","Location_TamourHatago","Location_TamourHatago2",
+            "Location_TaserakaBridge","Location_Taura","Location_TimesShrine",
+            "Location_ToriaBridge","Location_TotsugeBridge","Location_TurasuBridge",
+            "Location_UMiiVillage","Location_UMiiVillageShopBougu",
+            "Location_UMiiVillageShopJewel","Location_UMiiVillageShopYadoya",
+            "Location_UMiiVillageShopYorozu","Location_ValleyVillage",
+            "Location_WeaponCureSpring","Location_WeaponCureSpring_02",
+            "Location_WeaponCureSpring_03","Location_WeaponCureSpring_04",
+            "Location_WetGarrison","Location_WhiteZora","Location_WisdomFountain",
+            "Location_XekuBridge","Location_YashinoLegacy","Location_ZonauLegacy",
+        ];
+        LOCATION_FLAGS.iter().filter(|f| self.is_flag_set(f)).count()
+    }
+
+    fn enemy_completed(&self) -> usize {
+        // Static list of 84 defeated enemy flags from marcrobledo data.
+        const ENEMY_FLAGS: &[&str] = &[
+            // 40 Hinox
+            "MainField_IsDefeat_Enemy_Giant_Bone_1287559097",
+            "MainField_IsDefeat_Enemy_Giant_Bone_1698864303",
+            "MainField_IsDefeat_Enemy_Giant_Bone_1721655973",
+            "MainField_IsDefeat_Enemy_Giant_Bone_2519547405",
+            "MainField_IsDefeat_Enemy_Giant_Bone_2815854988",
+            "MainField_IsDefeat_Enemy_Giant_Bone_2974080467",
+            "MainField_IsDefeat_Enemy_Giant_Bone_3201775889",
+            "MainField_IsDefeat_Enemy_Giant_Bone_3700264996",
+            "MainField_IsDefeat_Enemy_Giant_Bone_4237208898",
+            "MainField_IsDefeat_Enemy_Giant_Bone_AllDay_73882430",
+            "MainField_IsDefeat_Enemy_Giant_Junior_1602515170",
+            "MainField_IsDefeat_Enemy_Giant_Junior_1833514674",
+            "MainField_IsDefeat_Enemy_Giant_Junior_1903632265",
+            "MainField_IsDefeat_Enemy_Giant_Junior_3337886442",
+            "MainField_IsDefeat_Enemy_Giant_Junior_3350013125",
+            "MainField_IsDefeat_Enemy_Giant_Junior_373348007",
+            "MainField_IsDefeat_Enemy_Giant_Junior_4099815924",
+            "MainField_IsDefeat_Enemy_Giant_Middle_1266282060",
+            "MainField_IsDefeat_Enemy_Giant_Middle_1384742674",
+            "MainField_IsDefeat_Enemy_Giant_Middle_1925665429",
+            "MainField_IsDefeat_Enemy_Giant_Middle_1949698080",
+            "MainField_IsDefeat_Enemy_Giant_Middle_2083136285",
+            "MainField_IsDefeat_Enemy_Giant_Middle_2472409077",
+            "MainField_IsDefeat_Enemy_Giant_Middle_2530315670",
+            "MainField_IsDefeat_Enemy_Giant_Middle_3272527560",
+            "MainField_IsDefeat_Enemy_Giant_Middle_3572226454",
+            "MainField_IsDefeat_Enemy_Giant_Middle_3627901807",
+            "MainField_IsDefeat_Enemy_Giant_Middle_3637193649",
+            "MainField_IsDefeat_Enemy_Giant_Middle_3706280648",
+            "MainField_IsDefeat_Enemy_Giant_Middle_3744176720",
+            "MainField_IsDefeat_Enemy_Giant_Middle_3831867213",
+            "MainField_IsDefeat_Enemy_Giant_Middle_4080554254",
+            "MainField_IsDefeat_Enemy_Giant_Middle_936329231",
+            "MainField_IsDefeat_Enemy_Giant_Senior_1028264440",
+            "MainField_IsDefeat_Enemy_Giant_Senior_2009832062",
+            "MainField_IsDefeat_Enemy_Giant_Senior_2853871544",
+            "MainField_IsDefeat_Enemy_Giant_Senior_3410381997",
+            "MainField_IsDefeat_Enemy_Giant_Senior_3741497810",
+            "MainField_IsDefeat_Enemy_Giant_Senior_3785639248",
+            "MainField_IsDefeat_Enemy_Giant_Senior_851170738",
+            // 40 Talus
+            "MainField_IsDefeat_Enemy_Golem_Fire_1372356658",
+            "MainField_IsDefeat_Enemy_Golem_Fire_2080410037",
+            "MainField_IsDefeat_Enemy_Golem_Fire_2112489205",
+            "MainField_IsDefeat_Enemy_Golem_Fire_3180486693",
+            "MainField_IsDefeat_Enemy_Golem_Fire_4143112243",
+            "MainField_IsDefeat_Enemy_Golem_Ice_1684711544",
+            "MainField_IsDefeat_Enemy_Golem_Ice_189892196",
+            "MainField_IsDefeat_Enemy_Golem_Ice_4007690024",
+            "MainField_IsDefeat_Enemy_Golem_Ice_4087740554",
+            "MainField_IsDefeat_Enemy_Golem_Ice_648092042",
+            "MainField_IsDefeat_Enemy_Golem_Junior_139564765",
+            "MainField_IsDefeat_Enemy_Golem_Junior_1450825465",
+            "MainField_IsDefeat_Enemy_Golem_Junior_2009332164",
+            "MainField_IsDefeat_Enemy_Golem_Junior_3610208070",
+            "MainField_IsDefeat_Enemy_Golem_Junior_3688513041",
+            "MainField_IsDefeat_Enemy_Golem_Junior_3707687090",
+            "MainField_IsDefeat_Enemy_Golem_Junior_3817875409",
+            "MainField_IsDefeat_Enemy_Golem_Junior_3873221297",
+            "MainField_IsDefeat_Enemy_Golem_Junior_4097205930",
+            "MainField_IsDefeat_Enemy_Golem_Junior_4234397911",
+            "MainField_IsDefeat_Enemy_Golem_Junior_481698249",
+            "MainField_IsDefeat_Enemy_Golem_Middle_1063952470",
+            "MainField_IsDefeat_Enemy_Golem_Middle_2367737901",
+            "MainField_IsDefeat_Enemy_Golem_Middle_2827830463",
+            "MainField_IsDefeat_Enemy_Golem_Middle_3273877672",
+            "MainField_IsDefeat_Enemy_Golem_Middle_3529818719",
+            "MainField_IsDefeat_Enemy_Golem_Middle_3605751469",
+            "MainField_IsDefeat_Enemy_Golem_Middle_372172601",
+            "MainField_IsDefeat_Enemy_Golem_Middle_3812413946",
+            "MainField_IsDefeat_Enemy_Golem_Middle_3900382371",
+            "MainField_IsDefeat_Enemy_Golem_Middle_491623064",
+            "MainField_IsDefeat_Enemy_Golem_Middle_853217538",
+            "MainField_IsDefeat_Enemy_Golem_Middle_975119268",
+            "MainField_IsDefeat_Enemy_Golem_Senior_1943962273",
+            "MainField_IsDefeat_Enemy_Golem_Senior_2455625785",
+            "MainField_IsDefeat_Enemy_Golem_Senior_2530932938",
+            "MainField_IsDefeat_Enemy_Golem_Senior_2763213354",
+            "MainField_IsDefeat_Enemy_Golem_Senior_321907823",
+            "MainField_IsDefeat_Enemy_Golem_Senior_3869714669",
+            "MainField_IsDefeat_Enemy_Golem_Senior_464316212",
+            // 4 Molduga
+            "MainField_IsDefeat_Enemy_Sandworm_3098676163",
+            "MainField_IsDefeat_Enemy_Sandworm_3538536935",
+            "MainField_IsDefeat_Enemy_Sandworm_3569739054",
+            "MainField_IsDefeat_Enemy_Sandworm_494020159",
+        ];
+        ENEMY_FLAGS.iter().filter(|f| self.is_flag_set(f)).count()
+    }
 }
 
 #[cfg(test)]

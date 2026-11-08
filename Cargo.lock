@@ -1097,6 +1097,7 @@ version = "0.1.0"
 dependencies = [
  "binrw",
  "crc32fast",
+ "serde",
  "thiserror",
 ]
 
@@ -1114,6 +1115,7 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "wayfinder-save",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 # Wayfinder Slate — Project Plan
 
 > Status: Draft for implementation  
-> Last updated: 2026-11-07  
+> Last updated: 2026-11-08  
 > Project root: `wayfinder-slate/`
 
 ## 1. Vision
@@ -515,7 +515,7 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 - [x] Typed scalar/string/array accessors
 - [x] Key ID metadata for core stats and inventory
 - [x] Synthetic fixtures + integration test with 1.9.0 save
-- [ ] Flag-to-map-object mapping
+- [x] Flag-to-map-object mapping (shrines, towers, Koroks, memories, locations, enemies)
 - [ ] Slot discovery and caption parsing
 
 ### M3 — Database and auth
@@ -534,9 +534,9 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 
 ### M5 — Dashboard and map
 
-- [ ] Dashboard stats and completion
-- [ ] Leaflet custom CRS and tiles
-- [ ] Korok/shrine/tower/memory/Divine Beast layers
+- [x] Dashboard stats and completion (API + frontend)
+- [x] Leaflet custom CRS and tiles
+- [x] Korok/shrine/tower/memory/Divine Beast layers (with completion)
 - [ ] Marker clustering, filters, progress
 - [ ] Coordinate calibration tests
 
@@ -585,6 +585,12 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
   discovery. Mitigation: raw chunk map, diagnostics, fixtures.
 - **Flag-to-marker mapping** — shrines/towers need CDungeon/tower number mapping.
   Mitigation: derive from object-map/community data and test against known saves.
+  - Shrines: `Clear_Dungeon000..135` mapped 1:1 to 136 named shrines via MrCheeze Dungeon.xmsbt + Zelda Dungeon markers
+  - Towers: `MapTower_01..15` exact coordinate match to 15 tower markers
+  - Koroks: 900 flags matched 1:1 to 900 Zelda Dungeon seed markers via greedy nearest-neighbor
+  - Memories: 14 picture memories in ZD order mapped to `IsGet_MemoryPhoto_000..013`
+  - Locations: 187 flags nearest-neighbor matched to ZD landmark/settlement markers (some low confidence)
+  - Enemies: 84 defeat flags mapped from MIT data
 - **Map tile licence** — the upstream repo has no explicit licence. Use with
   attribution, keep assets separate, and be prepared to swap the tile source.
 - **Coordinate orientation** — x/z order and sign must be calibrated against the
