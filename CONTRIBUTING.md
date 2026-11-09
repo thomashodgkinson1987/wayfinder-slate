@@ -65,6 +65,7 @@ cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 npm --prefix frontend run check
+npm --prefix frontend run test
 npm --prefix frontend run build
 node --check scripts/fetch-map-assets.mjs
 ```

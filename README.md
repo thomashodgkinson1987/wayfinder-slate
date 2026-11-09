@@ -2,8 +2,9 @@
 
 A self-hosted companion web app for **Savage Wind**, the PC recompilation of
 *The Legend of Zelda: Breath of the Wild*. It turns a BotW Switch 1.9.0 save into
-a dashboard and interactive Hyrule map, with optional live position data from
-Savage Wind's control server.
+a dashboard and interactive Hyrule map — Divine Beasts, shrines, towers,
+memories, Koroks, and more — with optional live position data from Savage Wind's
+control server.
 
 Wayfinder Slate is an unofficial fan project. It is not affiliated with Nintendo,
 Zelda Dungeon, or the Savage Wind project.

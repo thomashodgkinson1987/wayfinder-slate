@@ -12,6 +12,21 @@ stable until `1.0.0`.
 
 ## [Unreleased]
 
+### Added
+
+- Map: Divine Beast layer and completion, derived from the four `Clear_Remains*`
+  save flags and pinned to the upstream Main Quest markers.
+- API: `GET /api/slots/{slot}/map` returns the per-object completion identifiers
+  (flag names for named objects, CRC32 hashes for treasure chests) for a save
+  slot.
+- Map: `leaflet.markercluster` clustering for the dense layers, an
+  All / Unfinished / Completed completion filter, per-layer progress bars with
+  an overall completion percentage, and a "nearest unfinished" action.
+- Frontend: vitest + jsdom test runner with coordinate calibration tests
+  (independent upstream marker coordinates, world corners, and bounds
+  round-trips) and unit tests for the completion/filter/nearest helpers, run in
+  CI.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added

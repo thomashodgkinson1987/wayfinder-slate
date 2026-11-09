@@ -359,7 +359,11 @@ Completion rules:
   using object-map/community data.
 - **Towers:** `MapTower_XX` flags; map tower numbers to tower markers.
 - **Memories:** `IsGet_MemoryPhoto_XXX` flags; map `MemoryXX` markers.
-- **Divine Beasts:** relevant dungeon/quest flags; coordinates supplied separately.
+- **Divine Beasts:** the four `Clear_Remains*` flags (Water/Fire/Wind/Electric),
+  one per beast, matched to the Main Quest markers in the upstream Zelda Dungeon
+  `wiki.json` (coordinates in `map_objects.json`). The map view serves per-object
+  completion from `GET /api/slots/{slot}/map`, which returns the dataset
+  identifiers (flag names, or chest hashes) of the completed objects.
 - **Treasure chests:** `MainField_TBox_Field_*` flags, addressed by their CRC32
   hash rather than by name, because the chest flag names embed their placement
   id. The hash-to-marker table lives in `scripts/treasure-flags.json` and
@@ -554,9 +558,9 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 - [x] Dashboard stats and completion
 - [x] Leaflet custom CRS and tiles
 - [x] Korok/shrine/tower/memory/location/enemy layers
-- [ ] Divine Beast layers (with completion)
-- [ ] Marker clustering, filters, progress
-- [ ] Coordinate calibration tests
+- [x] Divine Beast layers (with completion)
+- [x] Marker clustering, filters, progress
+- [x] Coordinate calibration tests
 
 ### M6 — Play Data and Global
 
