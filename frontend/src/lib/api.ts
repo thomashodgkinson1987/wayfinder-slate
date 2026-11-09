@@ -51,6 +51,7 @@ export interface CompletionSummary {
   towers: CompletionCount;
   koroks: CompletionCount;
   memories: CompletionCount;
+  divine_beasts: CompletionCount;
   locations: CompletionCount;
   enemies: CompletionCount;
   treasures: CompletionCount;
@@ -106,7 +107,8 @@ export type MapObjectType =
   | 'memory'
   | 'location'
   | 'enemy'
-  | 'treasure';
+  | 'treasure'
+  | 'divineBeast';
 
 export interface MapObject {
   /** Save flag name. Treasure chests are hash-addressed and carry an `id` instead. */
@@ -122,6 +124,8 @@ export interface MapObject {
   icon?: string;
   id?: string;
   group?: string;
+  /** CRC32 save-flag hash, present on treasure chests. */
+  hash?: number;
 }
 
 export interface MapObjectsDataset {
@@ -134,6 +138,25 @@ export interface MapObjectsDataset {
   locations: MapObject[];
   enemies: MapObject[];
   treasures: MapObject[];
+  divineBeasts: MapObject[];
+}
+
+/** Dataset identifiers of the objects completed in a save slot. */
+export interface CompletedObjects {
+  shrines: string[];
+  towers: string[];
+  memories: string[];
+  koroks: string[];
+  locations: string[];
+  enemies: string[];
+  divine_beasts: string[];
+  /** CRC32 save-flag hashes of opened treasure chests. */
+  treasures: number[];
+}
+
+export interface MapCompletion {
+  slot: number;
+  completed: CompletedObjects;
 }
 
 export async function getConfig(): Promise<AppConfig> {
@@ -180,6 +203,27 @@ export async function getSlot(slot: number): Promise<SlotDetail> {
     throw new Error(`Save slot could not be loaded (server returned ${response.status}).`);
   }
   return (await response.json()) as SlotDetail;
+}
+
+/**
+ * Load per-object completion for a slot: the dataset identifiers of every
+ * completed shrine, tower, memory, Korok, location, enemy, Divine Beast, and
+ * treasure (by save-flag hash).
+ */
+export async function getMapCompletion(slot: number): Promise<MapCompletion> {
+  const response = await fetch(`/api/slots/${slot}/map`, {
+    headers: { accept: 'application/json' },
+  });
+  if (response.status === 404) {
+    throw new Error('Save slot not found.');
+  }
+  if (response.status === 422) {
+    throw new Error('The selected save file could not be parsed.');
+  }
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Map completion could not be loaded'));
+  }
+  return (await response.json()) as MapCompletion;
 }
 
 /** Pull the `{ "error": "..." }` message out of a failed API response. */

@@ -334,7 +334,10 @@
       {:else if page === 'map'}
         <MapView
           mapAssets={config?.map_assets ?? false}
-          completion={summary?.completion ?? null}
+          slot={selectedSlot}
+          position={summary?.stats.location
+            ? { x: summary.stats.location.x, z: summary.stats.location.z }
+            : null}
         />
       {:else if page === 'play-data'}
         <PlayData {config} {summary} {saveError} loading={summaryLoading} />
