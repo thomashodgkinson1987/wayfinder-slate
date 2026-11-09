@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "wayfinder-agent"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -2406,7 +2406,7 @@ dependencies = [
 
 [[package]]
 name = "wayfinder-control"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -2416,7 +2416,7 @@ dependencies = [
 
 [[package]]
 name = "wayfinder-save"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "binrw",
  "crc32fast",
@@ -2426,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "wayfinder-server"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "argon2",
