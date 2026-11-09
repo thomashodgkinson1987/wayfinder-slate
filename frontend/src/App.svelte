@@ -33,7 +33,7 @@
     },
     map: {
       title: 'Hyrule Map',
-      subtitle: 'Shrines, towers, memories, and every unfinished path.',
+      subtitle: 'Shrines, towers, Divine Beasts, memories, and every unfinished path.',
     },
     'play-data': {
       title: 'Play Data',

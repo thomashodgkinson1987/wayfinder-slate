@@ -34,6 +34,11 @@ stable until `1.0.0`.
 - Build: re-embed `frontend/dist` when it changes, so `cargo build` cannot reuse
   a binary with stale frontend assets.
 
+### Changed
+
+- Dashboard: show Divine Beasts, locations, and enemies alongside the existing
+  completion cards; Play Data now shows Divine Beasts too.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added

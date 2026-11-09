@@ -21,6 +21,7 @@
     { label: 'Korok seeds', hint: 'Collected out of 900' },
     { label: 'Shrines', hint: 'Completed out of 136' },
     { label: 'Towers', hint: 'Activated Sheikah towers' },
+    { label: 'Divine Beasts', hint: 'Freed out of 4' },
     { label: 'Memories', hint: 'Recovered picture memories' },
     { label: 'Locations', hint: 'Discovered named locations' },
     { label: 'Enemies', hint: 'Defeat counters and medals' },
@@ -47,6 +48,7 @@
           {#if completion}
             Shrines: {completion.shrines.completed}/{completion.shrines.total} ({completion.shrines.percentage.toFixed(1)}%) ·
             Towers: {completion.towers.completed}/{completion.towers.total} ·
+            Divine Beasts: {completion.divine_beasts.completed}/{completion.divine_beasts.total} ·
             Koroks: {completion.koroks.completed}/{completion.koroks.total} ·
             Memories: {completion.memories.completed}/{completion.memories.total} ·
             Chests: {completion.treasures.completed}/{completion.treasures.total}
@@ -81,6 +83,11 @@
         <div class="stat-label">Towers</div>
         <div class="stat-value">{completion.towers.completed}/{completion.towers.total}</div>
         <div class="stat-hint">{completion.towers.percentage.toFixed(1)}% complete</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Divine Beasts</div>
+        <div class="stat-value">{completion.divine_beasts.completed}/{completion.divine_beasts.total}</div>
+        <div class="stat-hint">{completion.divine_beasts.percentage.toFixed(1)}% complete</div>
       </article>
       <article class="stat-card">
         <div class="stat-label">Korok Seeds</div>

@@ -19,8 +19,11 @@
 
   const COMPLETION_CARDS: { label: string; key: keyof CompletionSummary }[] = [
     { label: 'Shrines', key: 'shrines' },
-    { label: 'Korok seeds', key: 'koroks' },
     { label: 'Sheikah towers', key: 'towers' },
+    { label: 'Divine Beasts', key: 'divine_beasts' },
+    { label: 'Locations', key: 'locations' },
+    { label: 'Enemies', key: 'enemies' },
+    { label: 'Korok seeds', key: 'koroks' },
     { label: 'Recovered memories', key: 'memories' },
     { label: 'Treasure chests', key: 'treasures' },
   ];
@@ -273,7 +276,7 @@
           <div>
             <div class="timeline-title">The map</div>
             <div class="timeline-desc">
-              Shrine, tower, memory, and Korok layers with selected-slot completion.
+              Shrine, tower, Divine Beast, memory, and Korok layers with selected-slot completion.
             </div>
           </div>
         </div>
