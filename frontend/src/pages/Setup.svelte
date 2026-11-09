@@ -30,6 +30,8 @@
     <dl class="kv">
       <dt>Deployment mode</dt>
       <dd>{modeName}</dd>
+      <dt>Authentication</dt>
+      <dd>{config?.auth_required ? 'Login required' : 'Not required (local)'}</dd>
       <dt>Server version</dt>
       <dd>{config?.version ?? '—'}</dd>
       <dt>Save folder</dt>

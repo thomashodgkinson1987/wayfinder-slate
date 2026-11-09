@@ -2,12 +2,16 @@
   import { onMount } from 'svelte';
   import {
     getConfig,
+    getMe,
     getSlot,
     getSlots,
+    logout,
     type AppConfig,
     type SlotDetail,
     type SlotSummary,
+    type User,
   } from './lib/api';
+  import Auth from './pages/Auth.svelte';
   import Dashboard from './pages/Dashboard.svelte';
   import MapView from './pages/MapView.svelte';
   import PlayData from './pages/PlayData.svelte';
@@ -45,6 +49,8 @@
 
   let page = $state<PageId>('dashboard');
   let config = $state<AppConfig | null>(null);
+  let user = $state<User | null>(null);
+  let authChecked = $state(false);
   let error = $state<string | null>(null);
   let retryTimer: ReturnType<typeof setInterval> | null = null;
   let slots = $state<SlotSummary[]>([]);
@@ -66,6 +72,9 @@
   );
   const showSlotPicker = $derived(
     config !== null && config.mode !== 'hub' && slots.length > 0,
+  );
+  const showAuthGate = $derived(
+    config !== null && authChecked && config.auth_required && user === null,
   );
 
   function readStoredSlot(): number | null {
@@ -95,14 +104,30 @@
         clearInterval(retryTimer);
         retryTimer = null;
       }
-      await loadSlots();
+      await loadUser();
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     }
   }
 
+  async function loadUser() {
+    try {
+      user = await getMe();
+    } catch {
+      // An unreachable auth probe should not wedge the shell; treat as signed out.
+      user = null;
+    } finally {
+      authChecked = true;
+    }
+    await loadSlots();
+  }
+
   async function loadSlots() {
-    if (config === null || config.mode === 'hub') {
+    if (
+      config === null ||
+      config.mode === 'hub' ||
+      (config.auth_required && user === null)
+    ) {
       slots = [];
       selectedSlot = null;
       summary = null;
@@ -158,6 +183,27 @@
     void loadSummary();
   }
 
+  function handleAuthenticated(authenticated: User) {
+    user = authenticated;
+    authChecked = true;
+    page = 'dashboard';
+    void loadSlots();
+  }
+
+  async function handleLogout() {
+    try {
+      await logout();
+    } catch {
+      // Even if the request fails the session may already be gone; drop local state.
+    }
+    user = null;
+    slots = [];
+    selectedSlot = null;
+    summary = null;
+    saveError = null;
+    await loadSlots();
+  }
+
   onMount(() => {
     void loadConfig();
     retryTimer = setInterval(() => {
@@ -169,6 +215,13 @@
   });
 </script>
 
+{#if showAuthGate}
+  <Auth
+    modeLabel={modeLabel}
+    registrationOpen={config?.registration_open ?? true}
+    onauthenticated={handleAuthenticated}
+  />
+{:else}
 <div class="app-shell">
   <aside class="sidebar">
     <div class="brand">
@@ -195,6 +248,22 @@
     </nav>
 
     <div class="sidebar-spacer"></div>
+
+    {#if user !== null}
+      <div class="account-card">
+        <div class="account-identity">
+          <span class="account-name" title={user.username}>{user.display_name}</span>
+          <span class="account-role">{user.role === 'admin' ? 'Administrator' : 'Player'}</span>
+        </div>
+        <button
+          type="button"
+          class="logout-button"
+          onclick={() => void handleLogout()}
+        >
+          Sign out
+        </button>
+      </div>
+    {/if}
 
     <div class="sidebar-status">
       <div class="status-row">
@@ -275,6 +344,7 @@
     </main>
   </div>
 </div>
+{/if}
 
 {#if error !== null}
   <div class="toast-error" role="status">

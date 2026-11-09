@@ -194,6 +194,59 @@ pre {
   flex: 1;
 }
 
+.account-card {
+  margin-top: 14px;
+  padding: 12px 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(9, 26, 33, 0.7);
+}
+
+.account-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.account-name {
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-role {
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.logout-button {
+  padding: 7px 10px;
+  border: 1px solid var(--line-bright);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease;
+}
+
+.logout-button:hover {
+  border-color: rgba(240, 139, 139, 0.4);
+  background: rgba(240, 139, 139, 0.06);
+  color: var(--danger);
+}
+
 .sidebar-status {
   margin-top: 20px;
   padding: 13px 14px;
@@ -840,6 +893,19 @@ pre.command {
   .sidebar-spacer,
   .sidebar-status {
     display: none;
+  }
+  .account-card {
+    margin-top: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    flex: none;
+  }
+  .account-identity {
+    display: none;
+  }
+  .logout-button {
+    white-space: nowrap;
   }
   .workspace {
     min-height: 0;

@@ -7,6 +7,37 @@ export interface AppConfig {
   save_dir: string | null;
   control_addr: string | null;
   map_assets: boolean;
+  /** Save/profile data needs a signed-in user (LAN and hub deployments). */
+  auth_required: boolean;
+  /** Whether self-service registration is currently available. */
+  registration_open: boolean;
+}
+
+export type UserRole = 'admin' | 'user';
+
+export interface User {
+  id: string;
+  username: string;
+  display_name: string;
+  role: UserRole;
+  created_at: number;
+}
+
+export type GameMode = 'normal' | 'master';
+
+export interface Profile {
+  id: string;
+  user_id: string;
+  name: string;
+  game_mode: GameMode;
+  is_public: boolean;
+  share_global: boolean;
+  created_at: number;
+}
+
+export interface ProfileInput {
+  name: string;
+  game_mode?: GameMode;
 }
 
 export interface CompletionCount {
@@ -149,4 +180,99 @@ export async function getSlot(slot: number): Promise<SlotDetail> {
     throw new Error(`Save slot could not be loaded (server returned ${response.status}).`);
   }
   return (await response.json()) as SlotDetail;
+}
+
+/** Pull the `{ "error": "..." }` message out of a failed API response. */
+async function apiError(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { error?: unknown };
+    if (typeof body.error === 'string' && body.error.length > 0) {
+      return body.error;
+    }
+  } catch {
+    // Non-JSON error body; fall back to a generic message.
+  }
+  return `${fallback} (server returned ${response.status}).`;
+}
+
+/**
+ * Load the signed-in user, or `null` when the request is unauthenticated.
+ * Other failures (server unreachable) propagate so the caller can decide.
+ */
+export async function getMe(): Promise<User | null> {
+  const response = await fetch('/api/me', {
+    headers: { accept: 'application/json' },
+  });
+  if (response.status === 401) return null;
+  if (!response.ok) {
+    throw new Error(`Could not load the current user (server returned ${response.status}).`);
+  }
+  const body = (await response.json()) as { user: User };
+  return body.user;
+}
+
+export async function login(username: string, password: string): Promise<User> {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Sign in failed'));
+  }
+  const body = (await response.json()) as { user: User };
+  return body.user;
+}
+
+export async function register(
+  username: string,
+  password: string,
+  displayName?: string,
+): Promise<User> {
+  const payload: Record<string, string> = { username, password };
+  const trimmedName = displayName?.trim();
+  if (trimmedName) payload.display_name = trimmedName;
+
+  const response = await fetch('/api/auth/register', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Registration failed'));
+  }
+  const body = (await response.json()) as { user: User };
+  return body.user;
+}
+
+export async function logout(): Promise<void> {
+  const response = await fetch('/api/auth/logout', {
+    method: 'POST',
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Sign out failed'));
+  }
+}
+
+export async function getProfiles(): Promise<Profile[]> {
+  const response = await fetch('/api/profiles', {
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Could not load profiles'));
+  }
+  return (await response.json()) as Profile[];
+}
+
+export async function createProfile(input: ProfileInput): Promise<Profile> {
+  const response = await fetch('/api/profiles', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Could not create the profile'));
+  }
+  return (await response.json()) as Profile;
 }
