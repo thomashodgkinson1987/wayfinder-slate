@@ -60,14 +60,37 @@ Vite proxies `/api` to the Rust server on `127.0.0.1:8080`.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `WAYFINDER_MODE` | `local` | `local`, `lan`, or `hub` |
-| `WAYFINDER_BIND` | `127.0.0.1:8080` | Listen address |
+| `WAYFINDER_BIND` | mode-aware | Listen address (see below) |
 | `WAYFINDER_SAVE_DIR` | auto-detected | Savage Wind save folder |
 | `WAYFINDER_CONTROL_ADDR` | `127.0.0.1:7777` | Savage Wind control socket |
 | `WAYFINDER_DATA_DIR` | `./data` | SQLite database and uploads |
+| `WAYFINDER_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` (set for HTTPS) |
 | `WAYFINDER_MAP_DIR` | bundled/none | Optional external map asset directory |
+
+The default bind address follows the deployment mode: `local` binds
+`127.0.0.1:8080` (loopback only), while `lan` and `hub` bind `0.0.0.0:8080` so
+other devices can connect.
 
 On Linux, saves default to `~/.local/share/savagewind/save`. On Windows, set
 `WAYFINDER_SAVE_DIR` to the `save` folder next to `savagewind.exe`.
+
+### Authentication
+
+Accounts are stored in the SQLite database under `WAYFINDER_DATA_DIR`
+(`wayfinder.sqlite3`), and passwords are hashed with Argon2id. The schema and
+migrations are embedded in the server binary and applied automatically on
+startup.
+
+- **Local** mode needs no login: the whole UI works on loopback.
+- **LAN** and **hub** modes require a session, and save data is hidden until you
+  sign in. The first account registered on a fresh database becomes the
+  administrator; later accounts are ordinary users.
+- Registration and login are handled by `POST /api/auth/register` and
+  `POST /api/auth/login`; `POST /api/auth/logout` ends the session. The session
+  cookie lives for seven days of inactivity.
+- Set `WAYFINDER_COOKIE_SECURE=true` when serving over HTTPS (for example
+  behind a TLS-terminating reverse proxy). Leaving it `false` on plain HTTP
+  keeps login working on a LAN address without TLS.
 
 ### Live mode
 

@@ -12,6 +12,23 @@ stable until `1.0.0`.
 
 ## [Unreleased]
 
+### Added
+
+- Server: SQLite persistence under `WAYFINDER_DATA_DIR` with embedded,
+  auto-applied migrations, running in WAL mode.
+- Authentication: account registration, login, and logout backed by Argon2id
+  password hashing and server-side session storage. The first registered account
+  becomes the administrator and later accounts are ordinary users; each account
+  gets a default profile.
+- Access policy: `local` mode stays open, while `lan` and `hub` modes require a
+  session for save data. Per-user endpoints (`/api/me`, `/api/profiles`) require
+  a signed-in user in every mode.
+- Frontend: sign-in / create-account view for LAN and hub deployments, and a
+  signed-in account card with a sign-out button in the sidebar.
+- Configuration: mode-aware default bind address (`127.0.0.1` for local,
+  `0.0.0.0` for LAN/hub) and `WAYFINDER_COOKIE_SECURE` for HTTPS deployments.
+- API: `/api/config` now reports `auth_required` and `registration_open`.
+
 ## [0.4.0] - 2026-11-08
 
 ### Added

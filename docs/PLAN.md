@@ -536,10 +536,10 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 
 ### M3 — Database and auth
 
-- [ ] sqlx migrations and connection setup
-- [ ] Users, profiles, sessions
-- [ ] Register/login/logout, Argon2id
-- [ ] Local/LAN/hub configuration
+- [x] sqlx migrations and connection setup
+- [x] Users, profiles, sessions
+- [x] Register/login/logout, Argon2id
+- [x] Local/LAN/hub configuration
 
 ### M4 — Save ingestion
 
