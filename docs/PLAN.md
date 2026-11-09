@@ -188,6 +188,12 @@ Parsing must handle:
 
 ## 5. Savage Wind control server
 
+> Documented against Savage Wind **0.4.1-alpha.4 (Alpha 4.1)**, the version this
+> project is built and tested against. A review of the **0.5.0-alpha.5 (Alpha 5)**
+> release (control docs and source) found the socket and player-safe commands
+> (`pos`, `state`, `camera`, `version`, `get`, `help`) unchanged, so
+> **0.5.0-alpha.5 should also work**; runtime verification is still pending.
+
 ### 5.1 What it provides
 
 `SAVAGEWIND_CONTROL=<port>` opens a **TCP text/JSON** server on `127.0.0.1` only.
@@ -204,11 +210,15 @@ Read-only/player-safe commands relevant to Wayfinder Slate:
 | Command | Data |
 | --- | --- |
 | `pos` | Link `x`, `y`, `z`, `stamina`, `place`, `player_info` |
-| `state` | frame count, uptime, FPS, in-game hour |
+| `state` | frame count, uptime, FPS (present once a full second of frames is measured), in-game hour (left out before a world is loaded — treat as optional), `hour_held` |
 | `camera` | camera position, direction, yaw, pitch |
 | `version` | game version, OS, architecture |
 | `get [key]` | current settings |
 | `help` | command list |
+| `report` | issue-report block: version, machine, place, settings |
+
+`exit` is always available on the socket and ends the game; Wayfinder Slate and
+its agent never send it.
 
 `SAVAGEWIND_CONTROL` also unlocks developer commands. Wayfinder Slate and its agent
 will only use the read-only player-safe commands above. The control port must stay
