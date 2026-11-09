@@ -127,6 +127,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/slots", get(list_slots))
         .route("/api/slots/{slot}", get(slot_detail))
         .route("/api/slots/{slot}/caption", get(slot_caption))
+        .route("/api/slots/{slot}/map", get(slot_map))
         .route("/api/completion", get(completion))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -218,13 +219,20 @@ async fn map_objects() -> Response {
 }
 
 async fn list_slots(State(state): State<AppState>) -> Response {
-    let slots = saves::list_slots(&state.config, map_object_labels());
+    let slots = saves::list_slots(&state.config, map_dataset());
     no_store(Json(slots).into_response())
 }
 
 async fn slot_detail(State(state): State<AppState>, Path(slot): Path<usize>) -> Response {
-    match saves::load_slot(&state.config, slot, map_object_labels()) {
+    match saves::load_slot(&state.config, slot, map_dataset()) {
         Ok(detail) => no_store(Json(detail).into_response()),
+        Err(error) => slot_error_response(slot, error),
+    }
+}
+
+async fn slot_map(State(state): State<AppState>, Path(slot): Path<usize>) -> Response {
+    match saves::load_map_completion(&state.config, slot, map_dataset()) {
+        Ok(completion) => no_store(Json(completion).into_response()),
         Err(error) => slot_error_response(slot, error),
     }
 }
@@ -279,18 +287,18 @@ fn no_store(mut response: Response) -> Response {
     response
 }
 
-fn map_object_labels() -> &'static saves::MapObjectLabels {
-    static LABELS: OnceLock<saves::MapObjectLabels> = OnceLock::new();
+fn map_dataset() -> &'static saves::MapObjects {
+    static OBJECTS: OnceLock<saves::MapObjects> = OnceLock::new();
 
-    LABELS.get_or_init(|| match Assets::get("data/map_objects.json") {
-        Some(asset) => match saves::MapObjectLabels::from_json(&asset.data) {
-            Ok(labels) => labels,
+    OBJECTS.get_or_init(|| match Assets::get("data/map_objects.json") {
+        Some(asset) => match saves::MapObjects::from_json(&asset.data) {
+            Ok(objects) => objects,
             Err(error) => {
                 tracing::warn!(%error, "could not parse map objects for slot labels");
-                saves::MapObjectLabels::default()
+                saves::MapObjects::default()
             }
         },
-        None => saves::MapObjectLabels::default(),
+        None => saves::MapObjects::default(),
     })
 }
 
@@ -581,6 +589,30 @@ mod tests {
         let response = slot_detail(State(state.clone()), Path(1)).await;
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
+        let response = slot_map(State(state.clone()), Path(0)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let map: serde_json::Value = serde_json::from_slice(&body_bytes(response).await).unwrap();
+        assert_eq!(map["slot"].as_u64(), Some(0));
+        for key in [
+            "shrines",
+            "towers",
+            "memories",
+            "koroks",
+            "locations",
+            "enemies",
+            "divine_beasts",
+            "treasures",
+        ] {
+            assert!(map["completed"][key].is_array(), "{key} should be an array");
+        }
+
+        let response = slot_map(State(state.clone()), Path(9)).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let response = slot_map(State(state.clone()), Path(1)).await;
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
         let response = slot_caption(State(state.clone()), Path(0)).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
@@ -858,6 +890,11 @@ mod tests {
         // Completion endpoint is behind the same guard.
         let (status, _, _) = send(&app2, Method::GET, "/api/completion", None, None).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // Per-object map completion is behind the same guard too.
+        let (status, _, body) = send(&app2, Method::GET, "/api/slots/0/map", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "authentication required");
 
         drop(db_dir);
         drop(db_dir2);

@@ -27,6 +27,29 @@ pub struct SlotDetail {
     pub completion: CompletionSummary,
 }
 
+/// Response returned by `GET /api/slots/{slot}/map`.
+#[derive(Debug, Serialize)]
+pub struct MapCompletion {
+    pub slot: usize,
+    pub completed: CompletedObjects,
+}
+
+/// Dataset identifiers for the objects completed in a save slot.
+///
+/// Named flags and Divine Beasts are returned by their dataset `flag` string;
+/// treasure chests are returned by their CRC32 save-flag hash.
+#[derive(Debug, Default, Serialize)]
+pub struct CompletedObjects {
+    pub shrines: Vec<String>,
+    pub towers: Vec<String>,
+    pub memories: Vec<String>,
+    pub koroks: Vec<String>,
+    pub locations: Vec<String>,
+    pub enemies: Vec<String>,
+    pub divine_beasts: Vec<String>,
+    pub treasures: Vec<u32>,
+}
+
 #[derive(Debug)]
 pub enum SlotError {
     /// No discovered slot has this number.
@@ -56,28 +79,48 @@ impl std::error::Error for SlotError {
     }
 }
 
-/// Friendly names for caption location identifiers.
+/// Parsed map-object dataset, reduced to what the server needs.
 ///
-/// The map-object dataset already carries the names used by the Zelda Dungeon
-/// map. We only need the `flag -> name` join, so the whole dataset is reduced to
-/// that map once at startup.
+/// The dataset joins save flags to Zelda Dungeon markers. The server keeps the
+/// `flag -> friendly name` join for caption labels and, per object type, the
+/// dataset flags (and treasure hashes) used for per-object completion.
 #[derive(Debug, Default)]
-pub struct MapObjectLabels {
+pub struct MapObjects {
     labels: HashMap<String, String>,
+    shrines: Vec<String>,
+    towers: Vec<String>,
+    memories: Vec<String>,
+    koroks: Vec<String>,
+    locations: Vec<String>,
+    enemies: Vec<String>,
+    divine_beasts: Vec<String>,
+    treasures: Vec<u32>,
 }
 
-impl MapObjectLabels {
+impl MapObjects {
     pub fn from_json(bytes: &[u8]) -> serde_json::Result<Self> {
         #[derive(Deserialize)]
         struct Dataset {
             #[serde(default)]
-            locations: Vec<MapObject>,
+            locations: Vec<LabelledObject>,
             #[serde(default)]
-            shrines: Vec<MapObject>,
+            shrines: Vec<LabelledObject>,
+            #[serde(default)]
+            towers: Vec<FlagObject>,
+            #[serde(default)]
+            memories: Vec<FlagObject>,
+            #[serde(default)]
+            koroks: Vec<FlagObject>,
+            #[serde(default)]
+            enemies: Vec<FlagObject>,
+            #[serde(default, rename = "divineBeasts")]
+            divine_beasts: Vec<FlagObject>,
+            #[serde(default)]
+            treasures: Vec<TreasureObject>,
         }
 
         #[derive(Deserialize)]
-        struct MapObject {
+        struct LabelledObject {
             flag: String,
             #[serde(default)]
             name: Option<String>,
@@ -85,21 +128,65 @@ impl MapObjectLabels {
             match_name: Option<String>,
         }
 
+        #[derive(Deserialize)]
+        struct FlagObject {
+            #[serde(default)]
+            flag: String,
+        }
+
+        #[derive(Deserialize)]
+        struct TreasureObject {
+            #[serde(default)]
+            hash: Option<u32>,
+        }
+
+        fn flags(objects: &[FlagObject]) -> Vec<String> {
+            objects
+                .iter()
+                .filter(|object| !object.flag.is_empty())
+                .map(|object| object.flag.clone())
+                .collect()
+        }
+
+        fn labelled_flags(objects: &[LabelledObject]) -> Vec<String> {
+            objects
+                .iter()
+                .filter(|object| !object.flag.is_empty())
+                .map(|object| object.flag.clone())
+                .collect()
+        }
+
         let dataset: Dataset = serde_json::from_slice(bytes)?;
         let mut labels = HashMap::new();
 
-        for object in dataset.locations {
-            if let Some(name) = object.match_name {
-                labels.insert(object.flag, name);
+        for object in &dataset.locations {
+            if let Some(name) = &object.match_name {
+                labels.insert(object.flag.clone(), name.clone());
             }
         }
-        for object in dataset.shrines {
-            if let Some(name) = object.name {
-                labels.entry(object.flag).or_insert(name);
+        for object in &dataset.shrines {
+            if let Some(name) = &object.name {
+                labels
+                    .entry(object.flag.clone())
+                    .or_insert_with(|| name.clone());
             }
         }
 
-        Ok(Self { labels })
+        Ok(Self {
+            labels,
+            shrines: labelled_flags(&dataset.shrines),
+            towers: flags(&dataset.towers),
+            memories: flags(&dataset.memories),
+            koroks: flags(&dataset.koroks),
+            locations: labelled_flags(&dataset.locations),
+            enemies: flags(&dataset.enemies),
+            divine_beasts: flags(&dataset.divine_beasts),
+            treasures: dataset
+                .treasures
+                .iter()
+                .filter_map(|object| object.hash)
+                .collect(),
+        })
     }
 
     /// Resolve a caption location such as `FaronHatago000` or `Dungeon015`.
@@ -122,11 +209,11 @@ impl MapObjectLabels {
 }
 
 /// Enumerate saved slots with their caption metadata.
-pub fn list_slots(config: &Config, labels: &MapObjectLabels) -> Vec<SlotSummary> {
+pub fn list_slots(config: &Config, objects: &MapObjects) -> Vec<SlotSummary> {
     config
         .save_slots()
         .into_iter()
-        .map(|slot| summary_for(config, slot, labels))
+        .map(|slot| summary_for(config, slot, objects))
         .collect()
 }
 
@@ -134,14 +221,49 @@ pub fn list_slots(config: &Config, labels: &MapObjectLabels) -> Vec<SlotSummary>
 pub fn load_slot(
     config: &Config,
     slot: usize,
-    labels: &MapObjectLabels,
+    objects: &MapObjects,
 ) -> Result<SlotDetail, SlotError> {
     let save = parse_save(config, slot)?;
     Ok(SlotDetail {
-        summary: summary_for(config, slot, labels),
+        summary: summary_for(config, slot, objects),
         stats: save.stats(),
         completion: save.completion_summary(),
     })
+}
+
+/// Load the dataset identifiers of every object completed in a slot.
+pub fn load_map_completion(
+    config: &Config,
+    slot: usize,
+    objects: &MapObjects,
+) -> Result<MapCompletion, SlotError> {
+    let save = parse_save(config, slot)?;
+    Ok(MapCompletion {
+        slot,
+        completed: CompletedObjects {
+            shrines: completed_flags(&save, &objects.shrines),
+            towers: completed_flags(&save, &objects.towers),
+            memories: completed_flags(&save, &objects.memories),
+            koroks: completed_flags(&save, &objects.koroks),
+            locations: completed_flags(&save, &objects.locations),
+            enemies: completed_flags(&save, &objects.enemies),
+            divine_beasts: completed_flags(&save, &objects.divine_beasts),
+            treasures: objects
+                .treasures
+                .iter()
+                .copied()
+                .filter(|&hash| save.is_key_set(hash))
+                .collect(),
+        },
+    })
+}
+
+fn completed_flags(save: &SaveFile, flags: &[String]) -> Vec<String> {
+    flags
+        .iter()
+        .filter(|flag| save.is_flag_set(flag))
+        .cloned()
+        .collect()
 }
 
 /// Load only the completion summary, kept for `/api/completion?slot=N`.
@@ -162,12 +284,12 @@ fn parse_save(config: &Config, slot: usize) -> Result<SaveFile, SlotError> {
     SaveFile::from_path(path).map_err(SlotError::Unreadable)
 }
 
-fn summary_for(config: &Config, slot: usize, labels: &MapObjectLabels) -> SlotSummary {
+fn summary_for(config: &Config, slot: usize, objects: &MapObjects) -> SlotSummary {
     let caption = config
         .save_caption_path(slot)
         .and_then(read_caption)
         .unwrap_or_default();
-    let label = labels
+    let label = objects
         .for_location(&caption.location)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Slot {slot}"));
@@ -306,7 +428,7 @@ mod tests {
 
     #[test]
     fn resolves_friendly_labels() {
-        let labels = MapObjectLabels::from_json(
+        let labels = MapObjects::from_json(
             br#"{
                 "locations": [
                     {"flag": "Location_FaronHatago000", "match_name": "Dueling Peaks Stable"}
@@ -344,7 +466,7 @@ mod tests {
         write_slot(&root.join("save_0"), 2, &valid_save(), None, None);
 
         let config = test_config(Mode::Local, Some(root.clone()));
-        let labels = MapObjectLabels::from_json(
+        let labels = MapObjects::from_json(
             br#"{"locations":[{"flag":"Location_FaronHatago000","match_name":"Dueling Peaks Stable"}]}"#,
         )
         .unwrap();
@@ -376,7 +498,7 @@ mod tests {
         );
 
         let config = test_config(Mode::Local, Some(root.clone()));
-        let detail = load_slot(&config, 0, &MapObjectLabels::default()).unwrap();
+        let detail = load_slot(&config, 0, &MapObjects::default()).unwrap();
 
         assert_eq!(detail.summary.slot, 0);
         assert_eq!(detail.stats.play_time_seconds, 50_166);
@@ -391,17 +513,75 @@ mod tests {
     }
 
     #[test]
+    fn loads_per_object_map_completion() {
+        const KOROK: &str = "MainField_Npc_HiddenKorokGround_3148789636";
+        const CHEST: u32 = 2_304_095;
+
+        let records = vec![
+            (SaveFile::completion_key("Clear_Dungeon015"), 1),
+            (SaveFile::completion_key("MapTower_07"), 1),
+            (SaveFile::completion_key(KOROK), 1),
+            (SaveFile::completion_key("Clear_RemainsWater"), 1),
+            (CHEST, 1),
+            // Present but zero: not complete.
+            (SaveFile::completion_key("Clear_Dungeon016"), 0),
+        ];
+
+        let root = temp_root("map-completion");
+        write_slot(&root.join("save_0"), 0, &build_save(&records), None, None);
+        let config = test_config(Mode::Local, Some(root.clone()));
+
+        let objects = MapObjects::from_json(
+            br#"{
+                "shrines": [
+                    {"flag": "Clear_Dungeon015", "name": "Toto Sah Shrine"},
+                    {"flag": "Clear_Dungeon016", "name": "Other Shrine"}
+                ],
+                "towers": [{"flag": "MapTower_07", "name": "Tower"}],
+                "koroks": [{"flag": "MainField_Npc_HiddenKorokGround_3148789636"}],
+                "divineBeasts": [
+                    {"flag": "Clear_RemainsWater", "name": "Divine Beast Vah Ruta"},
+                    {"flag": "Clear_RemainsFire", "name": "Divine Beast Vah Rudania"}
+                ],
+                "treasures": [{"id": "Treasure0001", "hash": 2304095}]
+            }"#,
+        )
+        .unwrap();
+
+        let completion = load_map_completion(&config, 0, &objects).unwrap();
+        assert_eq!(completion.slot, 0);
+        assert_eq!(completion.completed.shrines, vec!["Clear_Dungeon015"]);
+        assert_eq!(completion.completed.towers, vec!["MapTower_07"]);
+        assert_eq!(completion.completed.koroks, vec![KOROK]);
+        assert_eq!(
+            completion.completed.divine_beasts,
+            vec!["Clear_RemainsWater"]
+        );
+        assert_eq!(completion.completed.treasures, vec![CHEST]);
+        assert!(completion.completed.memories.is_empty());
+        assert!(completion.completed.locations.is_empty());
+        assert!(completion.completed.enemies.is_empty());
+
+        assert!(matches!(
+            load_map_completion(&config, 9, &objects),
+            Err(SlotError::SlotNotFound)
+        ));
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn distinguishes_missing_and_corrupt_slots() {
         let root = temp_root("errors");
         write_slot(&root.join("save_0"), 1, b"not a save", None, None);
         let config = test_config(Mode::Local, Some(root.clone()));
 
         assert!(matches!(
-            load_slot(&config, 9, &MapObjectLabels::default()),
+            load_slot(&config, 9, &MapObjects::default()),
             Err(SlotError::SlotNotFound)
         ));
         assert!(matches!(
-            load_slot(&config, 1, &MapObjectLabels::default()),
+            load_slot(&config, 1, &MapObjects::default()),
             Err(SlotError::Unreadable(_))
         ));
 
@@ -446,9 +626,9 @@ mod tests {
         );
         let config = test_config(Mode::Hub, Some(root.clone()));
 
-        assert!(list_slots(&config, &MapObjectLabels::default()).is_empty());
+        assert!(list_slots(&config, &MapObjects::default()).is_empty());
         assert!(matches!(
-            load_slot(&config, 0, &MapObjectLabels::default()),
+            load_slot(&config, 0, &MapObjects::default()),
             Err(SlotError::SlotNotFound)
         ));
         assert!(matches!(
