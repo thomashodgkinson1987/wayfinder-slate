@@ -32,6 +32,7 @@ const EXPECTED_TOTALS = {
   memories: 14,
   locations: 187,
   enemies: 84,
+  divineBeasts: 4,
 };
 
 /**
@@ -48,6 +49,12 @@ const EXPECTED_FLAGS = {
   shrines: sequence('Clear_Dungeon', 0, 136, 3),
   towers: sequence('MapTower_', 1, 15, 2),
   memories: sequence('IsGet_MemoryPhoto_', 0, 14, 3),
+  divineBeasts: [
+    'Clear_RemainsWater',
+    'Clear_RemainsFire',
+    'Clear_RemainsWind',
+    'Clear_RemainsElectric',
+  ],
 };
 
 const failures = [];
@@ -93,6 +100,8 @@ function checkLabel(type, object, where) {
     if (!isText(object.match_name)) fail(`${where}: expected a non-empty match_name`);
   } else if (type === 'enemies') {
     if (!isText(object.type)) fail(`${where}: expected a non-empty type`);
+  } else if (type === 'divineBeasts') {
+    if (!isText(object.name)) fail(`${where}: expected a non-empty name`);
   }
 }
 
@@ -116,8 +125,8 @@ try {
   process.exit(1);
 }
 
-if (dataset.version !== 2) {
-  fail(`expected dataset version 2, found ${JSON.stringify(dataset.version)}`);
+if (dataset.version !== 3) {
+  fail(`expected dataset version 3, found ${JSON.stringify(dataset.version)}`);
 }
 
 if (dataset.source === null || typeof dataset.source !== 'object') {
@@ -161,6 +170,7 @@ for (const [type, expectedTotal] of Object.entries(EXPECTED_TOTALS)) {
 // Treasure chests carry a marker id and a category instead of a flag name.
 const treasures = dataset.treasures;
 const treasureIds = new Set();
+const treasureHashes = new Set();
 if (!Array.isArray(treasures)) {
   fail('treasures: expected an array');
 } else {
@@ -181,6 +191,19 @@ if (!Array.isArray(treasures)) {
       fail(`${where}: duplicate id ${object.id}`);
     } else {
       treasureIds.add(object.id);
+    }
+
+    if (
+      typeof object.hash !== 'number' ||
+      !Number.isInteger(object.hash) ||
+      object.hash <= 0 ||
+      object.hash > 0xffffffff
+    ) {
+      fail(`${where}: expected a u32 save-flag hash`);
+    } else if (treasureHashes.has(object.hash)) {
+      fail(`${where}: duplicate hash ${object.hash}`);
+    } else {
+      treasureHashes.add(object.hash);
     }
 
     if (!isText(object.name)) fail(`${where}: expected a non-empty name`);
@@ -214,6 +237,25 @@ if (!Array.isArray(treasures)) {
       fail(`treasures: ${extra.length} chest(s) not in the flag table, first: ${extra[0]}`);
     }
 
+    const flagHashes = Object.keys(flagDocument.treasure ?? {}).map(Number);
+
+    // Every chest carries the CRC32 hash of its save flag so the map view can
+    // match completed chests. The dataset hashes must equal the flag table.
+    const missingHashes = flagHashes.filter((hash) => !treasureHashes.has(hash));
+    const extraHashes = [...treasureHashes].filter((hash) => !flagHashes.includes(hash));
+    if (missingHashes.length > 0) {
+      fail(
+        `treasures: ${missingHashes.length} chest hash(es) missing from the dataset, ` +
+          `first: ${missingHashes[0]}`,
+      );
+    }
+    if (extraHashes.length > 0) {
+      fail(
+        `treasures: ${extraHashes.length} dataset hash(es) not in the flag table, ` +
+          `first: ${extraHashes[0]}`,
+      );
+    }
+
     // The Rust save parser counts opened chests from a generated hash list, so
     // that list must cover exactly the hashes in the flag table.
     const rustPath = TREASURE_HASHES_PATH;
@@ -227,7 +269,6 @@ if (!Array.isArray(treasures)) {
       const rustHashes = [...rustSource.matchAll(/0x([0-9a-fA-F_]+)/g)].map((match) =>
         Number.parseInt(match[1].replace(/_/g, ''), 16),
       );
-      const flagHashes = Object.keys(flagDocument.treasure ?? {}).map(Number);
 
       if (rustHashes.length !== flagHashes.length) {
         fail(
@@ -237,11 +278,11 @@ if (!Array.isArray(treasures)) {
       }
 
       const rustSet = new Set(rustHashes);
-      const missingHashes = flagHashes.filter((hash) => !rustSet.has(hash));
-      if (missingHashes.length > 0) {
+      const missingFromRust = flagHashes.filter((hash) => !rustSet.has(hash));
+      if (missingFromRust.length > 0) {
         fail(
-          `treasures: ${missingHashes.length} chest flag(s) missing from the save parser, ` +
-            `first: ${missingHashes[0]}`,
+          `treasures: ${missingFromRust.length} chest flag(s) missing from the save parser, ` +
+            `first: ${missingFromRust[0]}`,
         );
       }
     }

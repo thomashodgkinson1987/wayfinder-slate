@@ -158,6 +158,7 @@ async function main() {
 
     treasures.push({
       id: marker.id,
+      hash,
       name: marker.name,
       group: marker.group,
       x,
@@ -184,7 +185,7 @@ async function main() {
   }
 
   const dataset = await readJson(DATASET_PATH);
-  dataset.version = 2;
+  dataset.version = 3;
   dataset.source = { ...dataset.source, treasures: SOURCE_ATTRIBUTION };
   dataset.treasures = treasures;
 
