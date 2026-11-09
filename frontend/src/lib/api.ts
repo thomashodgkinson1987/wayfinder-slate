@@ -320,3 +320,75 @@ export async function createProfile(input: ProfileInput): Promise<Profile> {
   }
   return (await response.json()) as Profile;
 }
+
+/** List the stored save slots owned by a profile. */
+export async function getProfileSlots(profileId: string): Promise<SlotSummary[]> {
+  const response = await fetch(`/api/profiles/${encodeURIComponent(profileId)}/slots`, {
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Could not load the profile saves'));
+  }
+  return (await response.json()) as SlotSummary[];
+}
+
+/** Files accepted by [`uploadSlot`]; `game_data` is required. */
+export interface SlotUploadFiles {
+  game_data: File;
+  caption_sav?: File | null;
+  caption_image?: File | null;
+}
+
+/**
+ * Upload a save into a profile. Pass `slotIndex` to replace a specific slot;
+ * omit it to allocate the next free slot. Returns the stored summary.
+ */
+export async function uploadSlot(
+  profileId: string,
+  files: SlotUploadFiles,
+  slotIndex?: number | null,
+): Promise<SlotSummary> {
+  const form = new FormData();
+  form.append('game_data', files.game_data);
+  if (files.caption_sav) form.append('caption_sav', files.caption_sav);
+  if (files.caption_image) form.append('caption_image', files.caption_image);
+  if (slotIndex !== undefined && slotIndex !== null) {
+    form.append('slot_index', String(slotIndex));
+  }
+
+  const response = await fetch(`/api/profiles/${encodeURIComponent(profileId)}/saves/upload`, {
+    method: 'POST',
+    headers: { accept: 'application/json' },
+    body: form,
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Upload failed'));
+  }
+  return (await response.json()) as SlotSummary;
+}
+
+export interface ImportError {
+  slot: number;
+  error: string;
+}
+
+export interface ImportResult {
+  imported: SlotSummary[];
+  errors: ImportError[];
+}
+
+/**
+ * Import a save folder into the machine-local source. Local deployments only;
+ * the server rejects this route with `403` on LAN/hub.
+ */
+export async function importPath(path: string): Promise<ImportResult> {
+  const response = await fetch('/api/saves/import-path', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Import failed'));
+  }
+  return (await response.json()) as ImportResult;
+}

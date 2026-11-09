@@ -15,14 +15,16 @@
   import Dashboard from './pages/Dashboard.svelte';
   import MapView from './pages/MapView.svelte';
   import PlayData from './pages/PlayData.svelte';
+  import Saves from './pages/Saves.svelte';
   import Setup from './pages/Setup.svelte';
 
-  type PageId = 'dashboard' | 'map' | 'play-data' | 'setup';
+  type PageId = 'dashboard' | 'map' | 'play-data' | 'saves' | 'setup';
 
   const NAV: { id: PageId; label: string; icon: string }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: '◈' },
     { id: 'map', label: 'Hyrule Map', icon: '⌖' },
     { id: 'play-data', label: 'Play Data', icon: '▤' },
+    { id: 'saves', label: 'Saves', icon: '▣' },
     { id: 'setup', label: 'Setup', icon: '⚙' },
   ];
 
@@ -38,6 +40,10 @@
     'play-data': {
       title: 'Play Data',
       subtitle: 'Progress, records, and the story the save file tells.',
+    },
+    saves: {
+      title: 'Saves',
+      subtitle: 'Upload saves to a profile, or import a local save folder.',
     },
     setup: {
       title: 'Setup & About',
@@ -70,9 +76,7 @@
           ? 'LAN'
           : 'Local',
   );
-  const showSlotPicker = $derived(
-    config !== null && config.mode !== 'hub' && slots.length > 0,
-  );
+  const showSlotPicker = $derived(config !== null && slots.length > 0);
   const showAuthGate = $derived(
     config !== null && authChecked && config.auth_required && user === null,
   );
@@ -123,11 +127,8 @@
   }
 
   async function loadSlots() {
-    if (
-      config === null ||
-      config.mode === 'hub' ||
-      (config.auth_required && user === null)
-    ) {
+    // Wait until auth is resolved; never fetch as an anonymous hub user.
+    if (config === null || (config.auth_required && user === null)) {
       slots = [];
       selectedSlot = null;
       summary = null;
@@ -341,6 +342,8 @@
         />
       {:else if page === 'play-data'}
         <PlayData {config} {summary} {saveError} loading={summaryLoading} />
+      {:else if page === 'saves'}
+        <Saves {config} {user} onuploaded={() => void loadSlots()} />
       {:else}
         <Setup {config} />
       {/if}
