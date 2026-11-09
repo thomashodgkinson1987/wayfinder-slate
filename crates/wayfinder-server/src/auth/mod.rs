@@ -1,5 +1,6 @@
 //! Authentication: user store, session persistence, and module glue.
 
+pub mod session_store;
 pub mod users;
 
 /// The axum-login backend: our SQLite-backed user store.
