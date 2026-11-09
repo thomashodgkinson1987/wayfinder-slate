@@ -8,4 +8,7 @@ fn main() {
     let dist = manifest.join("../../frontend/dist");
     std::fs::create_dir_all(&dist).expect("create frontend/dist");
     println!("cargo:rerun-if-changed=build.rs");
+    // rust-embed bakes the frontend into the binary at compile time. Without
+    // this, `cargo build` can reuse a stale binary after `npm run build`.
+    println!("cargo:rerun-if-changed=../../frontend/dist");
 }

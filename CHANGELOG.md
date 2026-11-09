@@ -27,6 +27,13 @@ stable until `1.0.0`.
   round-trips) and unit tests for the completion/filter/nearest helpers, run in
   CI.
 
+### Fixed
+
+- Map: load `leaflet.markercluster` after seeding the global Leaflet instance,
+  fixing a blank page caused by `ReferenceError: L is not defined` at startup.
+- Build: re-embed `frontend/dist` when it changes, so `cargo build` cannot reuse
+  a binary with stale frontend assets.
+
 ## [0.5.0] - 2026-11-09
 
 ### Added
