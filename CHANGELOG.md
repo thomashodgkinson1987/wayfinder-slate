@@ -12,6 +12,8 @@ stable until `1.0.0`.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-09
+
 ### Added
 
 - Map: Divine Beast layer and completion, derived from the four `Clear_Remains*`
@@ -136,7 +138,8 @@ stable until `1.0.0`.
   findings, Savage Wind control server protocol, map asset pipeline,
   architecture, milestones, and repository setup.
 
-[Unreleased]: https://github.com/thomashodgkinson1987/wayfinder-slate/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/thomashodgkinson1987/wayfinder-slate/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/thomashodgkinson1987/wayfinder-slate/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/thomashodgkinson1987/wayfinder-slate/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/thomashodgkinson1987/wayfinder-slate/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/thomashodgkinson1987/wayfinder-slate/compare/v0.2.0...v0.3.0
