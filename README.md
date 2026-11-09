@@ -66,6 +66,10 @@ Vite proxies `/api` to the Rust server on `127.0.0.1:8080`.
 | `WAYFINDER_CONTROL_ADDR` | `127.0.0.1:7777` | Savage Wind control socket |
 | `WAYFINDER_DATA_DIR` | `./data` | SQLite database and uploads |
 | `WAYFINDER_COOKIE_SECURE` | `false` | Mark the session cookie `Secure` (set for HTTPS) |
+| `WAYFINDER_SNAPSHOT_LIMIT` | `500` | Max stored snapshots per save slot (`0` keeps all) |
+| `WAYFINDER_KEEP_RAW_SAVES` | `false` | Store gzip-compressed copies of `game_data.sav` |
+| `WAYFINDER_WATCH` | `true` | Watch the save folder for changes (never in hub mode) |
+| `WAYFINDER_MAX_UPLOAD_BYTES` | `8388608` | Max multipart upload size (clamped to 512 KiB minimum) |
 | `WAYFINDER_MAP_DIR` | bundled/none | Optional external map asset directory |
 
 The default bind address follows the deployment mode: `local` binds
@@ -110,6 +114,26 @@ a local `wayfinder-agent`, never by inbound connections to the player's PC.
 ```sh
 cargo run -p wayfinder-agent -- probe
 ```
+
+### Saved data and snapshots
+
+Save data is ingested once and kept in SQLite; the API reads stored snapshots
+and never re-parses `game_data.sav` on each request. The same read path serves
+local, LAN, and hub deployments.
+
+- On startup the server scans `WAYFINDER_SAVE_DIR` and ingests every numbered
+  slot. In local and LAN mode a watcher then rescans after changes (750 ms quiet
+  window, 2 s cap), deduping by SHA-256 so an unchanged save adds no history.
+- Each distinct save state adds a snapshot. `WAYFINDER_SNAPSHOT_LIMIT` caps
+  history per slot; `0` keeps everything.
+- Set `WAYFINDER_KEEP_RAW_SAVES=true` to also store a gzip-compressed copy of
+  each `game_data.sav`. Raw blobs are never exposed by the API and cost roughly
+  1 MB per save.
+- In hub mode, `/api/slots` reads the signed-in user's primary profile. Use the
+  **Saves** page to upload `game_data.sav` (required) plus optional `caption.sav`
+  and `caption.jpg` into any owned profile.
+- `POST /api/saves/import-path` imports a folder's slots into the machine-local
+  store. It is available only in local mode; LAN and hub return `403`.
 
 ## Map assets
 

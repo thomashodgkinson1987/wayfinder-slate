@@ -12,6 +12,27 @@ stable until `1.0.0`.
 
 ## [Unreleased]
 
+### Added
+
+- Save ingestion: a startup scan and a debounced folder watcher ingest
+  `game_data.sav` into new `save_slots` and `snapshots` tables, deduping by
+  SHA-256 and retrying partial writes.
+- Snapshot storage with configurable per-slot retention
+  (`WAYFINDER_SNAPSHOT_LIMIT`, default 500) and optional gzip raw-save retention
+  (`WAYFINDER_KEEP_RAW_SAVES`).
+- API: `POST /api/profiles/{id}/saves/upload` (multipart `game_data`,
+  `caption_sav`, `caption_image`, optional `slot_index`) and
+  `GET /api/profiles/{id}/slots` plus `.../{slot}/caption`.
+- API: `POST /api/saves/import-path` imports a save folder in local mode.
+- UI: a Saves page for profile uploads and local folder imports.
+
+### Changed
+
+- Save APIs now read stored snapshots instead of parsing `game_data.sav` on
+  every request.
+- Hub mode now shows a signed-in user's primary-profile saves; previously it
+  served no save data at all.
+
 ## [0.6.0] - 2026-11-09
 
 ### Added

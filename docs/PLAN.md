@@ -443,6 +443,12 @@ Use UUIDv7/ULID IDs, foreign keys, indexes on profile/slot/timestamp, and cascad
 deletes for user data removal. Store completion as a compact JSON object of arrays
 per object type rather than thousands of rows per snapshot.
 
+> **M4 refinement:** `save_slots.profile_id` is nullable. `NULL` marks the
+> machine-local source (the `WAYFINDER_SAVE_DIR` folder or a local import), which
+> is what local/LAN `/api/slots*` serves; a non-NULL id marks a profile-owned slot
+> (upload, or later the agent). Caption blobs live on `save_slots`, while history
+> lives on `snapshots` with a count-only completion summary.
+
 ### 7.5 API outline
 
 Auth:
@@ -457,7 +463,9 @@ Profiles and saves:
 - `GET/POST /api/profiles`
 - `PATCH/DELETE /api/profiles/:id`
 - `POST /api/profiles/:id/saves/upload` (multipart)
-- `POST /api/profiles/:id/saves/import-path` (local mode only)
+- `POST /api/saves/import-path` (machine-scoped, local mode only; M4 refinement
+  of the profile-scoped sketch below, since imported files are the machine's own
+  save folder)
 - `GET /api/profiles/:id/slots`
 - `GET /api/slots/:id`
 - `GET /api/slots/:id/snapshot/latest`
@@ -547,10 +555,10 @@ Use Svelte stores plus a typed fetch client. Add a PWA manifest later if useful.
 
 ### M4 — Save ingestion
 
-- [ ] Folder watcher with debounce/hash/retry
-- [ ] Snapshot storage and retention
-- [ ] Multipart upload and path import
-- [ ] Slot selection API
+- [x] Folder watcher with debounce/hash/retry
+- [x] Snapshot storage and retention
+- [x] Multipart upload and path import
+- [x] Slot selection API
 
 ### M5 — Dashboard and map
 
