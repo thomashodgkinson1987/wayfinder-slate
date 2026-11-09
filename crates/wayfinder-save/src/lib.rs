@@ -265,6 +265,15 @@ pub const TOWER_TOTAL: usize = 15;
 pub const KOROK_TOTAL: usize = 900;
 /// Total picture memories tracked by `IsGet_MemoryPhoto_000..013`.
 pub const MEMORY_TOTAL: usize = 14;
+/// Total Divine Beasts freed, tracked by the four `Clear_Remains*` flags.
+pub const DIVINE_BEAST_TOTAL: usize = 4;
+/// The four Divine Beast completion flags, in `Clear_Remains*` order.
+const DIVINE_BEAST_FLAGS: &[&str] = &[
+    "Clear_RemainsWater",
+    "Clear_RemainsFire",
+    "Clear_RemainsWind",
+    "Clear_RemainsElectric",
+];
 /// Total treasure chests tracked by the `MainField_TBox_Field_*` flags.
 pub const TREASURE_TOTAL: usize = treasure_hashes::TREASURE_TOTAL;
 
@@ -275,6 +284,7 @@ pub struct CompletionSummary {
     pub towers: CompletionCount,
     pub koroks: CompletionCount,
     pub memories: CompletionCount,
+    pub divine_beasts: CompletionCount,
     pub locations: CompletionCount,
     pub enemies: CompletionCount,
     pub treasures: CompletionCount,
@@ -428,6 +438,11 @@ impl SaveFile {
         let memory_completed = (0..MEMORY_TOTAL)
             .filter(|i| self.is_flag_set(&format!("IsGet_MemoryPhoto_{:03}", i)))
             .count();
+        // Divine Beasts: Clear_RemainsWater/Fire/Wind/Electric (4)
+        let divine_beast_completed = DIVINE_BEAST_FLAGS
+            .iter()
+            .filter(|flag| self.is_flag_set(flag))
+            .count();
         // Locations and enemies use their flag-list lengths as totals so the
         // summary cannot drift from the data.
         let (location_completed, location_total) = self.location_progress();
@@ -444,6 +459,7 @@ impl SaveFile {
             towers: CompletionCount::new(TOWER_TOTAL, tower_completed),
             koroks: CompletionCount::new(KOROK_TOTAL, korok_completed),
             memories: CompletionCount::new(MEMORY_TOTAL, memory_completed),
+            divine_beasts: CompletionCount::new(DIVINE_BEAST_TOTAL, divine_beast_completed),
             locations: CompletionCount::new(location_total, location_completed),
             enemies: CompletionCount::new(enemy_total, enemy_completed),
             treasures: CompletionCount::new(TREASURE_TOTAL, treasure_completed),
@@ -917,13 +933,34 @@ mod tests {
         assert_eq!(summary.towers.total, TOWER_TOTAL);
         assert_eq!(summary.koroks.total, KOROK_TOTAL);
         assert_eq!(summary.memories.total, MEMORY_TOTAL);
+        assert_eq!(summary.divine_beasts.total, DIVINE_BEAST_TOTAL);
         assert_eq!(summary.locations.total, 187);
         assert_eq!(summary.enemies.total, 84);
         assert_eq!(summary.treasures.total, TREASURE_TOTAL);
         assert_eq!(summary.shrines.completed, 0);
+        assert_eq!(summary.divine_beasts.completed, 0);
         assert_eq!(summary.locations.completed, 0);
         assert_eq!(summary.enemies.completed, 0);
         assert_eq!(summary.treasures.completed, 0);
+    }
+
+    #[test]
+    fn counts_freed_divine_beasts() {
+        // No `Clear_Remains*` records: nothing freed.
+        let save = SaveFile::parse(build(VERSION_1_9_0, &[])).unwrap();
+        assert_eq!(save.completion_summary().divine_beasts.total, 4);
+        assert_eq!(save.completion_summary().divine_beasts.completed, 0);
+
+        // One freed beast counts once, out of four.
+        let water = SaveFile::completion_key("Clear_RemainsWater");
+        let save = SaveFile::parse(build(VERSION_1_9_0, &[(water, 1)])).unwrap();
+        let summary = save.completion_summary();
+        assert_eq!(summary.divine_beasts.total, DIVINE_BEAST_TOTAL);
+        assert_eq!(summary.divine_beasts.completed, 1);
+
+        // A present-but-zero flag still counts as not freed.
+        let save = SaveFile::parse(build(VERSION_1_9_0, &[(water, 0)])).unwrap();
+        assert_eq!(save.completion_summary().divine_beasts.completed, 0);
     }
 
     #[test]

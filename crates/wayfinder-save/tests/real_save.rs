@@ -50,6 +50,8 @@ fn real_save_completion_summary() {
     assert_eq!(summary.koroks.completed, 72); // from HiddenKorok_Number counter
     assert_eq!(summary.memories.total, 14);
     assert_eq!(summary.memories.completed, 1); // IsGet_MemoryPhoto_008
+    assert_eq!(summary.divine_beasts.total, 4);
+    assert_eq!(summary.divine_beasts.completed, 0); // no beast freed yet
     assert_eq!(summary.locations.total, 187);
     assert_eq!(summary.locations.completed, 18); // 18 known locations discovered
     assert_eq!(summary.enemies.total, 84);
