@@ -8,6 +8,12 @@ Savage Wind's control server.
 Wayfinder Slate is an unofficial fan project. It is not affiliated with Nintendo,
 Zelda Dungeon, or the Savage Wind project.
 
+> [!NOTE]
+> This project is developed primarily using AI. Most of the code and
+> documentation are produced with large language models — mainly
+> **GLM 5.3 Flash**, **DeepSeek V4.1 Flash**, and **MiniMax M3.1 Flash** —
+> though this is not an exhaustive list.
+
 ## Status
 
 Early scaffolding. The save parser, API, and UI are under active development.
