@@ -300,6 +300,7 @@ mod tests {
             save_dir,
             control_addr: "127.0.0.1:7777".parse().unwrap(),
             data_dir: PathBuf::from("data"),
+            cookie_secure: false,
         }
     }
 

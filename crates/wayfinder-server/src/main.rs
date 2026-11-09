@@ -1,4 +1,5 @@
 mod config;
+mod db;
 mod http;
 mod saves;
 
@@ -6,6 +7,7 @@ use std::sync::Arc;
 
 use anyhow::Context;
 use config::Config;
+use http::AppState;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -22,7 +24,14 @@ async fn main() -> anyhow::Result<()> {
     let save_dir = config.save_dir.clone();
     let data_dir = config.data_dir.clone();
 
-    let app = http::router(Arc::new(config));
+    let db = db::open_pool(&config.data_dir)
+        .await
+        .context("could not prepare the SQLite database")?;
+
+    let app = http::router(AppState {
+        config: Arc::new(config),
+        db,
+    });
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .with_context(|| format!("could not bind {bind}"))?;

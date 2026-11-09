@@ -8,11 +8,19 @@ use axum::routing::get;
 use axum::{Json, Router};
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
 use crate::saves;
+
+/// Shared router state: configuration plus the SQLite pool. Cheap to clone.
+#[derive(Clone)]
+pub struct AppState {
+    pub config: Arc<Config>,
+    pub db: SqlitePool,
+}
 
 #[derive(RustEmbed)]
 #[folder = "../../frontend/dist"]
@@ -39,7 +47,7 @@ struct CompletionQuery {
     slot: Option<usize>,
 }
 
-pub fn router(config: Arc<Config>) -> Router {
+pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/config", get(public_config))
@@ -51,7 +59,7 @@ pub fn router(config: Arc<Config>) -> Router {
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
-        .with_state(config)
+        .with_state(state)
 }
 
 async fn health() -> Json<Health> {
@@ -61,7 +69,8 @@ async fn health() -> Json<Health> {
     })
 }
 
-async fn public_config(State(config): State<Arc<Config>>) -> Json<PublicConfig> {
+async fn public_config(State(state): State<AppState>) -> Json<PublicConfig> {
+    let config = &*state.config;
     Json(PublicConfig {
         mode: config.mode,
         version: env!("CARGO_PKG_VERSION"),
@@ -82,20 +91,20 @@ async fn map_objects() -> Response {
     }
 }
 
-async fn list_slots(State(config): State<Arc<Config>>) -> Response {
-    let slots = saves::list_slots(&config, map_object_labels());
+async fn list_slots(State(state): State<AppState>) -> Response {
+    let slots = saves::list_slots(&state.config, map_object_labels());
     no_store(Json(slots).into_response())
 }
 
-async fn slot_detail(State(config): State<Arc<Config>>, Path(slot): Path<usize>) -> Response {
-    match saves::load_slot(&config, slot, map_object_labels()) {
+async fn slot_detail(State(state): State<AppState>, Path(slot): Path<usize>) -> Response {
+    match saves::load_slot(&state.config, slot, map_object_labels()) {
         Ok(detail) => no_store(Json(detail).into_response()),
         Err(error) => slot_error_response(slot, error),
     }
 }
 
-async fn slot_caption(State(config): State<Arc<Config>>, Path(slot): Path<usize>) -> Response {
-    match saves::load_caption(&config, slot) {
+async fn slot_caption(State(state): State<AppState>, Path(slot): Path<usize>) -> Response {
+    match saves::load_caption(&state.config, slot) {
         Ok(bytes) => {
             let mut response = Response::new(Body::from(bytes));
             response
@@ -108,11 +117,11 @@ async fn slot_caption(State(config): State<Arc<Config>>, Path(slot): Path<usize>
 }
 
 async fn completion(
-    State(config): State<Arc<Config>>,
+    State(state): State<AppState>,
     Query(query): Query<CompletionQuery>,
 ) -> Response {
     let slot = query.slot.unwrap_or(0);
-    match saves::load_completion(&config, slot) {
+    match saves::load_completion(&state.config, slot) {
         Ok(summary) => no_store(Json(summary).into_response()),
         Err(error) => slot_error_response(slot, error),
     }
@@ -218,14 +227,17 @@ mod tests {
     use crate::config::Mode;
     use crate::saves::test_support::{caption_save, temp_root, valid_save, write_slot};
 
-    fn test_config(mode: Mode, save_dir: Option<PathBuf>) -> Arc<Config> {
-        Arc::new(Config {
+    async fn test_state(mode: Mode, save_dir: Option<PathBuf>) -> (tempfile::TempDir, AppState) {
+        let (db_dir, db) = crate::db::temp_db().await;
+        let config = Arc::new(Config {
             mode,
             bind: "127.0.0.1:0".parse().unwrap(),
             save_dir,
             control_addr: "127.0.0.1:7777".parse().unwrap(),
-            data_dir: PathBuf::from("data"),
-        })
+            data_dir: db_dir.path().to_path_buf(),
+            cookie_secure: false,
+        });
+        (db_dir, AppState { config, db })
     }
 
     async fn body_bytes(response: Response) -> Vec<u8> {
@@ -254,15 +266,15 @@ mod tests {
             None,
         );
 
-        let config = test_config(Mode::Local, Some(root.clone()));
+        let (db_dir, state) = test_state(Mode::Local, Some(root.clone())).await;
 
-        let response = list_slots(State(config.clone())).await;
+        let response = list_slots(State(state.clone())).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let slots: serde_json::Value = serde_json::from_slice(&body_bytes(response).await).unwrap();
         assert_eq!(slots.as_array().unwrap().len(), 3);
 
-        let response = slot_detail(State(config.clone()), Path(0)).await;
+        let response = slot_detail(State(state.clone()), Path(0)).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let detail: serde_json::Value =
@@ -276,25 +288,26 @@ mod tests {
             Some(1)
         );
 
-        let response = slot_detail(State(config.clone()), Path(9)).await;
+        let response = slot_detail(State(state.clone()), Path(9)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        let response = slot_detail(State(config.clone()), Path(1)).await;
+        let response = slot_detail(State(state.clone()), Path(1)).await;
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
 
-        let response = slot_caption(State(config.clone()), Path(0)).await;
+        let response = slot_caption(State(state.clone()), Path(0)).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()[header::CONTENT_TYPE], "image/jpeg");
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(body_bytes(response).await, b"jpeg-bytes".to_vec());
 
-        let response = slot_caption(State(config.clone()), Path(2)).await;
+        let response = slot_caption(State(state.clone()), Path(2)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        let response = slot_caption(State(config), Path(9)).await;
+        let response = slot_caption(State(state), Path(9)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         std::fs::remove_dir_all(root).unwrap();
+        drop(db_dir);
     }
 
     #[tokio::test]
@@ -307,18 +320,19 @@ mod tests {
             Some(&caption_save()),
             Some(b"jpeg-bytes"),
         );
-        let config = test_config(Mode::Hub, Some(root.clone()));
+        let (db_dir, state) = test_state(Mode::Hub, Some(root.clone())).await;
 
-        let response = list_slots(State(config.clone())).await;
+        let response = list_slots(State(state.clone())).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(body_bytes(response).await, b"[]".to_vec());
 
-        let response = slot_detail(State(config.clone()), Path(0)).await;
+        let response = slot_detail(State(state.clone()), Path(0)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-        let response = slot_caption(State(config), Path(0)).await;
+        let response = slot_caption(State(state), Path(0)).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         std::fs::remove_dir_all(root).unwrap();
+        drop(db_dir);
     }
 }

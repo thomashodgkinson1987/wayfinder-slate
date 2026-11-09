@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
+use time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -28,7 +29,22 @@ impl Mode {
     pub fn supports_direct_live(self) -> bool {
         matches!(self, Self::Local | Self::Lan)
     }
+
+    /// Local mode serves one user on the gaming PC, so bind to loopback.
+    /// LAN and hub modes must accept connections from other devices.
+    pub fn default_bind(self) -> SocketAddr {
+        match self {
+            Self::Local => "127.0.0.1:8080",
+            Self::Lan | Self::Hub => "0.0.0.0:8080",
+        }
+        .parse()
+        .expect("hard-coded bind address")
+    }
 }
+
+/// Session lifetime for issued cookies and stored session records.
+/// A module constant keeps the environment surface small.
+pub const SESSION_TTL: Duration = Duration::days(7);
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -37,6 +53,9 @@ pub struct Config {
     pub save_dir: Option<PathBuf>,
     pub control_addr: SocketAddr,
     pub data_dir: PathBuf,
+    /// Mark the session cookie `Secure` for TLS deployments. Only set this for
+    /// HTTPS; a plain-HTTP deployment would drop the cookie entirely.
+    pub cookie_secure: bool,
 }
 
 impl Config {
@@ -46,10 +65,12 @@ impl Config {
             Err(_) => Mode::Local,
         };
 
-        let bind = std::env::var("WAYFINDER_BIND")
-            .unwrap_or_else(|_| "127.0.0.1:8080".into())
-            .parse()
-            .map_err(|error| format!("invalid WAYFINDER_BIND: {error}"))?;
+        let bind = match std::env::var("WAYFINDER_BIND") {
+            Ok(value) => value
+                .parse()
+                .map_err(|error| format!("invalid WAYFINDER_BIND: {error}"))?,
+            Err(_) => mode.default_bind(),
+        };
 
         let control_addr = std::env::var("WAYFINDER_CONTROL_ADDR")
             .unwrap_or_else(|_| wayfinder_control_addr())
@@ -65,12 +86,18 @@ impl Config {
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("data"));
 
+        let cookie_secure = match std::env::var("WAYFINDER_COOKIE_SECURE") {
+            Ok(value) => parse_cookie_secure(&value)?,
+            Err(_) => false,
+        };
+
         Ok(Self {
             mode,
             bind,
             save_dir,
             control_addr,
             data_dir,
+            cookie_secure,
         })
     }
 
@@ -166,6 +193,19 @@ fn wayfinder_control_addr() -> String {
     "127.0.0.1:7777".into()
 }
 
+/// Parse `WAYFINDER_COOKIE_SECURE`. Accepts common boolean spellings; an
+/// explicit `true` is required so that accidental Secure cookies on HTTP
+/// loopback deployments cannot silently break login.
+fn parse_cookie_secure(value: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "" | "0" | "false" | "no" | "off" => Ok(false),
+        other => Err(format!(
+            "unknown WAYFINDER_COOKIE_SECURE {other:?}; expected a boolean"
+        )),
+    }
+}
+
 /// Best-effort discovery of the Savage Wind save directory.
 ///
 /// Users can always override this with `WAYFINDER_SAVE_DIR`. On Windows,
@@ -255,7 +295,26 @@ mod tests {
             save_dir,
             control_addr: "127.0.0.1:7777".parse().unwrap(),
             data_dir: PathBuf::from("data"),
+            cookie_secure: false,
         }
+    }
+
+    #[test]
+    fn binds_to_loopback_for_local_and_all_interfaces_otherwise() {
+        assert_eq!(Mode::Local.default_bind().to_string(), "127.0.0.1:8080");
+        assert_eq!(Mode::Lan.default_bind().to_string(), "0.0.0.0:8080");
+        assert_eq!(Mode::Hub.default_bind().to_string(), "0.0.0.0:8080");
+    }
+
+    #[test]
+    fn parses_cookie_secure_booleans() {
+        for value in ["true", "TRUE", "1", "yes", "on", " yes "] {
+            assert_eq!(parse_cookie_secure(value).unwrap(), true, "{value:?}");
+        }
+        for value in ["false", "0", "no", "off", ""] {
+            assert_eq!(parse_cookie_secure(value).unwrap(), false, "{value:?}");
+        }
+        assert!(parse_cookie_secure("maybe").is_err());
     }
 
     fn temp_root(name: &str) -> PathBuf {

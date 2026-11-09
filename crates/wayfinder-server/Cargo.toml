@@ -9,13 +9,23 @@ description = "Wayfinder Slate web server"
 
 [dependencies]
 anyhow.workspace = true
+argon2.workspace = true
 axum.workspace = true
+axum-login.workspace = true
 mime_guess.workspace = true
+rmp-serde.workspace = true
 rust-embed.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sqlx.workspace = true
+time.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
+tower-sessions.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+uuid.workspace = true
 wayfinder-save = { path = "../wayfinder-save" }
+
+[dev-dependencies]
+tempfile = "3"
