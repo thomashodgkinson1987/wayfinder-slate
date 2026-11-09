@@ -159,6 +159,16 @@ impl GameMode {
         }
     }
 
+    /// Parse a client-supplied game mode. `None` for anything unrecognised so
+    /// handlers can answer `400` instead of silently defaulting.
+    pub fn from_name(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "normal" => Some(Self::Normal),
+            "master" => Some(Self::Master),
+            _ => None,
+        }
+    }
+
     /// Strict parse of the `game_mode` column.
     fn parse(value: &str) -> Self {
         match value {

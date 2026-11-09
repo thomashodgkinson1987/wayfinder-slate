@@ -24,25 +24,13 @@ impl SqlxSessionStore {
         Self(pool)
     }
 
-    /// Best-effort removal of expired rows; the startup path already purges
-    /// in `db.rs`.
-    pub async fn purge_expired(&self) -> SessionResult<u64> {
-        let result = sqlx::query(
-            "DELETE FROM sessions WHERE expiry < CAST(strftime('%s','now') AS INTEGER)",
-        )
-        .execute(&self.0)
-        .await
-        .map_err(backend)?;
-        Ok(result.rows_affected())
-    }
-
     async fn expiry_of(&self, session_id: &Id) -> SessionResult<Option<i64>> {
         let row = sqlx::query("SELECT expiry FROM sessions WHERE id = ?")
             .bind(session_id.to_string())
             .fetch_optional(&self.0)
             .await
             .map_err(backend)?;
-        Ok(row.map(|row| row.try_get(0).map_err(backend)).transpose()?)
+        row.map(|row| row.try_get(0).map_err(backend)).transpose()
     }
 }
 
@@ -146,9 +134,9 @@ mod tests {
     use serde_json::json;
     use time::Duration;
 
-    async fn store() -> (tempfile::TempDir, SqlxSessionStore) {
+    async fn store() -> (tempfile::TempDir, sqlx::SqlitePool, SqlxSessionStore) {
         let (dir, pool) = temp_db().await;
-        (dir, SqlxSessionStore::new(pool))
+        (dir, pool.clone(), SqlxSessionStore::new(pool))
     }
 
     fn record(days: i64, value: &str) -> session::Record {
@@ -163,7 +151,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_then_load_round_trips_the_record() {
-        let (dir, store) = store().await;
+        let (dir, _pool, store) = store().await;
 
         let mut created = record(1, "identity");
         store.create(&mut created).await.unwrap();
@@ -177,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn save_uploads_an_existing_record() {
-        let (dir, store) = store().await;
+        let (dir, _pool, store) = store().await;
 
         let mut created = record(1, "one");
         store.create(&mut created).await.unwrap();
@@ -199,7 +187,7 @@ mod tests {
 
     #[tokio::test]
     async fn create_regenerates_the_id_on_unique_violation() {
-        let (dir, store) = store().await;
+        let (dir, _pool, store) = store().await;
 
         // Insert a row, then create a record with the same id: the store
         // must retry with a fresh id instead of failing.
@@ -218,7 +206,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_removes_the_session() {
-        let (dir, store) = store().await;
+        let (dir, _pool, store) = store().await;
 
         let mut created = record(1, "gone");
         store.create(&mut created).await.unwrap();
@@ -234,17 +222,17 @@ mod tests {
 
     #[tokio::test]
     async fn expired_sessions_are_not_returned() {
-        let (dir, store) = store().await;
+        let (dir, _pool, store) = store().await;
 
         let expired = record(-1, "stale");
         store.save(&expired).await.unwrap();
         assert!(store.load(&expired.id).await.unwrap().is_none());
 
         // And the periodic purge removes the row entirely.
-        let purged = store.purge_expired().await.unwrap();
+        let purged = crate::db::purge_expired_sessions(&_pool).await.unwrap();
         assert_eq!(purged, 1);
         let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sessions")
-            .fetch_one(&store.0)
+            .fetch_one(&_pool)
             .await
             .unwrap();
         assert_eq!(remaining, 0);

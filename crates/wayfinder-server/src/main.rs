@@ -29,9 +29,16 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("could not prepare the SQLite database")?;
 
+    let backend = auth::Backend::new(db.clone());
+    match backend.count().await {
+        Ok(users) => tracing::info!(users, "authentication ready"),
+        Err(error) => tracing::warn!(%error, "could not count registered users"),
+    }
+
     let app = http::router(AppState {
         config: Arc::new(config),
         db,
+        backend,
     });
     let listener = tokio::net::TcpListener::bind(bind)
         .await

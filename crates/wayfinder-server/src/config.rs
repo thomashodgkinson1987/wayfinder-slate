@@ -309,10 +309,10 @@ mod tests {
     #[test]
     fn parses_cookie_secure_booleans() {
         for value in ["true", "TRUE", "1", "yes", "on", " yes "] {
-            assert_eq!(parse_cookie_secure(value).unwrap(), true, "{value:?}");
+            assert!(parse_cookie_secure(value).unwrap(), "{value:?}");
         }
         for value in ["false", "0", "no", "off", ""] {
-            assert_eq!(parse_cookie_secure(value).unwrap(), false, "{value:?}");
+            assert!(!parse_cookie_secure(value).unwrap(), "{value:?}");
         }
         assert!(parse_cookie_secure("maybe").is_err());
     }

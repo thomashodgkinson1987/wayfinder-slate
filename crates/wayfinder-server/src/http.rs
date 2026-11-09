@@ -1,25 +1,34 @@
 use std::sync::{Arc, OnceLock};
 
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
+use axum_login::AuthManagerLayerBuilder;
 use rust_embed::RustEmbed;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
+use tower_sessions::cookie::SameSite;
+use tower_sessions::{Expiry, SessionManagerLayer};
 
-use crate::config::Config;
+use crate::auth::session_store::SqlxSessionStore;
+use crate::auth::users::{CreateProfileError, CreateUserError, Credentials, GameMode, User};
+use crate::auth::{AuthSession, Backend};
+use crate::config::{Config, Mode, SESSION_TTL};
 use crate::saves;
 
-/// Shared router state: configuration plus the SQLite pool. Cheap to clone.
+/// Shared router state: configuration, the SQLite pool, and the auth backend.
+/// Cheap to clone.
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
     pub db: SqlitePool,
+    pub backend: Backend,
 }
 
 #[derive(RustEmbed)]
@@ -40,6 +49,10 @@ struct PublicConfig {
     save_dir: Option<String>,
     control_addr: Option<String>,
     map_assets: bool,
+    /// True when save/profile data requires a signed-in user (LAN/hub).
+    auth_required: bool,
+    /// Open registration is enabled for v1; M8 may gate it per mode.
+    registration_open: bool,
 }
 
 #[derive(Deserialize)]
@@ -47,18 +60,98 @@ struct CompletionQuery {
     slot: Option<usize>,
 }
 
+/// Public shape of a user in API responses. Never includes `password_hash`.
+#[derive(Serialize)]
+struct PublicUser {
+    id: String,
+    username: String,
+    display_name: String,
+    role: crate::auth::users::Role,
+    created_at: i64,
+}
+
+impl From<&User> for PublicUser {
+    fn from(user: &User) -> Self {
+        Self {
+            id: user.id.clone(),
+            username: user.username.clone(),
+            display_name: user.display_name.clone(),
+            role: user.role,
+            created_at: user.created_at,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct UserEnvelope {
+    user: PublicUser,
+}
+
+#[derive(Serialize)]
+struct ApiError {
+    error: String,
+}
+
+#[derive(Deserialize)]
+struct RegisterRequest {
+    username: String,
+    password: String,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LoginRequest {
+    username: String,
+    password: String,
+}
+
+#[derive(Deserialize)]
+struct CreateProfileRequest {
+    name: String,
+    #[serde(default)]
+    game_mode: Option<String>,
+}
+
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/api/health", get(health))
-        .route("/api/config", get(public_config))
-        .route("/api/map-objects", get(map_objects))
+    // The AuthManagerLayer provides both the session middleware and the auth
+    // session extension, so it must be the outermost of the two.
+    let session_layer = SessionManagerLayer::new(SqlxSessionStore::new(state.db.clone()))
+        .with_secure(state.config.cookie_secure)
+        .with_same_site(SameSite::Lax)
+        .with_expiry(Expiry::OnInactivity(SESSION_TTL));
+    let auth_layer = AuthManagerLayerBuilder::new(state.backend.clone(), session_layer).build();
+
+    // Save data is open on the local machine but requires a login on LAN/hub.
+    let save_routes = Router::new()
         .route("/api/slots", get(list_slots))
         .route("/api/slots/{slot}", get(slot_detail))
         .route("/api/slots/{slot}/caption", get(slot_caption))
         .route("/api/completion", get(completion))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            require_auth_outside_local,
+        ));
+
+    // Per-user resources require a signed-in user in every mode.
+    let account_routes = Router::new()
+        .route("/api/me", get(me))
+        .route("/api/profiles", get(list_profiles).post(create_profile))
+        .route_layer(middleware::from_fn(require_auth_always));
+
+    Router::new()
+        .route("/api/health", get(health))
+        .route("/api/config", get(public_config))
+        .route("/api/map-objects", get(map_objects))
+        .route("/api/auth/register", post(register))
+        .route("/api/auth/login", post(login))
+        .route("/api/auth/logout", post(logout))
+        .merge(save_routes)
+        .merge(account_routes)
         .fallback(static_asset)
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
+        .layer(auth_layer)
         .with_state(state)
 }
 
@@ -81,7 +174,40 @@ async fn public_config(State(state): State<AppState>) -> Json<PublicConfig> {
             .supports_direct_live()
             .then(|| config.control_addr.to_string()),
         map_assets: Assets::get("map/botw/tiles/0/0_0.jpg").is_some(),
+        auth_required: config.mode != Mode::Local,
+        registration_open: true,
     })
+}
+
+/// Is the request's auth session attached to a signed-in user?
+fn is_authenticated(request: &Request) -> bool {
+    request
+        .extensions()
+        .get::<AuthSession>()
+        .is_some_and(|session| session.user.is_some())
+}
+
+/// Policy guard for save-data routes: no auth required on the local machine,
+/// JSON `401` on LAN/hub.
+async fn require_auth_outside_local(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if state.config.mode == Mode::Local || is_authenticated(&request) {
+        next.run(request).await
+    } else {
+        json_error(StatusCode::UNAUTHORIZED, "authentication required")
+    }
+}
+
+/// Policy guard for per-user resources: always require a signed-in user.
+async fn require_auth_always(request: Request, next: Next) -> Response {
+    if is_authenticated(&request) {
+        next.run(request).await
+    } else {
+        json_error(StatusCode::UNAUTHORIZED, "authentication required")
+    }
 }
 
 async fn map_objects() -> Response {
@@ -168,6 +294,159 @@ fn map_object_labels() -> &'static saves::MapObjectLabels {
     })
 }
 
+/// Register a new account, create its default profile, and sign it in.
+async fn register(
+    State(state): State<AppState>,
+    mut auth_session: AuthSession,
+    Json(payload): Json<RegisterRequest>,
+) -> Response {
+    match state
+        .backend
+        .create_user(
+            &payload.username,
+            &payload.password,
+            payload.display_name.as_deref(),
+        )
+        .await
+    {
+        Ok(user) => {
+            if let Err(error) = auth_session.login(&user).await {
+                tracing::error!(%error, "could not start a session after registration");
+                return internal_error();
+            }
+            (
+                StatusCode::CREATED,
+                Json(UserEnvelope {
+                    user: PublicUser::from(&user),
+                }),
+            )
+                .into_response()
+        }
+        Err(CreateUserError::Invalid(message)) => json_error(StatusCode::BAD_REQUEST, message),
+        Err(CreateUserError::Duplicate) => {
+            json_error(StatusCode::CONFLICT, "username is already taken")
+        }
+        Err(CreateUserError::Backend(error)) => {
+            tracing::error!(%error, "registration failed");
+            internal_error()
+        }
+    }
+}
+
+/// Authenticate and start a session. Every failure mode returns the same
+/// generic message so account existence is never disclosed.
+async fn login(mut auth_session: AuthSession, Json(payload): Json<LoginRequest>) -> Response {
+    let credentials = Credentials {
+        username: payload.username,
+        password: payload.password,
+    };
+
+    match auth_session.authenticate(credentials).await {
+        Ok(Some(user)) => {
+            if let Err(error) = auth_session.login(&user).await {
+                tracing::error!(%error, "could not start a session after login");
+                return internal_error();
+            }
+            (
+                StatusCode::OK,
+                Json(UserEnvelope {
+                    user: PublicUser::from(&user),
+                }),
+            )
+                .into_response()
+        }
+        Ok(None) => json_error(StatusCode::UNAUTHORIZED, "invalid credentials"),
+        Err(error) => {
+            tracing::error!(%error, "login failed");
+            internal_error()
+        }
+    }
+}
+
+/// End the session. Idempotent: returns `204` even when not signed in.
+async fn logout(mut auth_session: AuthSession) -> Response {
+    match auth_session.logout().await {
+        Ok(_) => StatusCode::NO_CONTENT.into_response(),
+        Err(error) => {
+            tracing::error!(%error, "logout failed");
+            internal_error()
+        }
+    }
+}
+
+async fn me(auth_session: AuthSession) -> Response {
+    match auth_session.user {
+        Some(user) => Json(UserEnvelope {
+            user: PublicUser::from(&user),
+        })
+        .into_response(),
+        None => json_error(StatusCode::UNAUTHORIZED, "authentication required"),
+    }
+}
+
+async fn list_profiles(auth_session: AuthSession) -> Response {
+    let Some(user) = auth_session.user else {
+        return json_error(StatusCode::UNAUTHORIZED, "authentication required");
+    };
+
+    match auth_session.backend.profiles_for_user(&user.id).await {
+        Ok(profiles) => Json(profiles).into_response(),
+        Err(error) => {
+            tracing::error!(%error, "could not list profiles");
+            internal_error()
+        }
+    }
+}
+
+async fn create_profile(
+    auth_session: AuthSession,
+    Json(payload): Json<CreateProfileRequest>,
+) -> Response {
+    let Some(user) = auth_session.user else {
+        return json_error(StatusCode::UNAUTHORIZED, "authentication required");
+    };
+
+    let game_mode = match payload.game_mode.as_deref() {
+        None => GameMode::Normal,
+        Some(value) => match GameMode::from_name(value) {
+            Some(mode) => mode,
+            None => {
+                return json_error(
+                    StatusCode::BAD_REQUEST,
+                    "game_mode must be either \"normal\" or \"master\"",
+                );
+            }
+        },
+    };
+
+    match auth_session
+        .backend
+        .create_profile(&user.id, &payload.name, game_mode)
+        .await
+    {
+        Ok(profile) => (StatusCode::CREATED, Json(profile)).into_response(),
+        Err(CreateProfileError::Invalid(message)) => json_error(StatusCode::BAD_REQUEST, message),
+        Err(CreateProfileError::Backend(error)) => {
+            tracing::error!(%error, "could not create profile");
+            internal_error()
+        }
+    }
+}
+
+fn json_error(status: StatusCode, message: impl Into<String>) -> Response {
+    (
+        status,
+        Json(ApiError {
+            error: message.into(),
+        }),
+    )
+        .into_response()
+}
+
+fn internal_error() -> Response {
+    json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal server error")
+}
+
 async fn static_asset(uri: Uri) -> Response {
     let requested = uri.path().trim_start_matches('/');
     let requested = if requested.is_empty() {
@@ -237,7 +516,15 @@ mod tests {
             data_dir: db_dir.path().to_path_buf(),
             cookie_secure: false,
         });
-        (db_dir, AppState { config, db })
+        let backend = Backend::new(db.clone());
+        (
+            db_dir,
+            AppState {
+                config,
+                db,
+                backend,
+            },
+        )
     }
 
     async fn body_bytes(response: Response) -> Vec<u8> {
@@ -333,6 +620,316 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         std::fs::remove_dir_all(root).unwrap();
+        drop(db_dir);
+    }
+
+    // --- auth, policy, and profile integration tests ---------------------
+
+    use axum::http::Method;
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    /// Drive the full router (all middleware applied) through one request,
+    /// returning the status, first `Set-Cookie` pair (name=value only), and
+    /// parsed JSON body.
+    async fn send(
+        app: &Router,
+        method: Method,
+        uri: &str,
+        body: Option<serde_json::Value>,
+        cookie: Option<&str>,
+    ) -> (StatusCode, Option<String>, serde_json::Value) {
+        let mut builder = Request::builder().method(method).uri(uri);
+        if body.is_some() {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+        }
+        if let Some(cookie) = cookie {
+            builder = builder.header(header::COOKIE, cookie);
+        }
+        let request = builder
+            .body(Body::from(
+                body.map(|value| value.to_string()).unwrap_or_default(),
+            ))
+            .unwrap();
+
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status();
+        let cookie = response
+            .headers()
+            .get(header::SET_COOKIE)
+            .and_then(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap_or_default().to_string());
+
+        let bytes = body_bytes(response).await;
+        let json = if bytes.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+        };
+        (status, cookie, json)
+    }
+
+    async fn register(
+        app: &Router,
+        username: &str,
+        password: &str,
+    ) -> (StatusCode, Option<String>, serde_json::Value) {
+        send(
+            app,
+            Method::POST,
+            "/api/auth/register",
+            Some(json!({ "username": username, "password": password })),
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn health_and_config_stay_public_and_show_policy_flags() {
+        let (db_dir, state) = test_state(Mode::Local, None).await;
+        let app = router(state);
+
+        let (status, _, body) = send(&app, Method::GET, "/api/health", None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["ok"], true);
+
+        let (status, _, body) = send(&app, Method::GET, "/api/config", None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["auth_required"], false, "local mode is open");
+        assert_eq!(body["registration_open"], true);
+
+        let (db_dir2, state2) = test_state(Mode::Hub, None).await;
+        let app2 = router(state2);
+        let (status, _, body) = send(&app2, Method::GET, "/api/config", None, None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["auth_required"], true, "hub requires auth");
+
+        drop(db_dir);
+        drop(db_dir2);
+    }
+
+    #[tokio::test]
+    async fn register_login_logout_lifecycle() {
+        let (db_dir, state) = test_state(Mode::Local, None).await;
+        let app = router(state);
+
+        let (status, cookie, body) = register(&app, "Thistle", "longpassword1").await;
+        assert_eq!(status, StatusCode::CREATED);
+        let cookie = cookie.expect("registration should start a session");
+        assert_eq!(body["user"]["username"], "Thistle");
+        assert_eq!(body["user"]["role"], "admin", "first user is admin");
+        assert!(body["user"].get("password_hash").is_none());
+
+        let (status, _, body) = send(&app, Method::GET, "/api/me", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["user"]["username"], "Thistle");
+
+        let (status, _, body) = send(&app, Method::GET, "/api/me", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "authentication required");
+
+        let (status, _, _) =
+            send(&app, Method::POST, "/api/auth/logout", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        // The server-side record is gone, so the stale cookie no longer works.
+        let (status, _, _) = send(&app, Method::GET, "/api/me", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // Logout stays idempotent without a session.
+        let (status, _, _) = send(&app, Method::POST, "/api/auth/logout", None, None).await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+
+        drop(db_dir);
+    }
+
+    #[tokio::test]
+    async fn login_failures_are_generic_and_success_returns_a_working_session() {
+        let (db_dir, state) = test_state(Mode::Local, None).await;
+        let app = router(state);
+        register(&app, "Kokiri", "longpassword1").await;
+
+        let (status, _, body) = send(
+            &app,
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "username": "Kokiri", "password": "wrongpassword" })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "invalid credentials");
+
+        let (status, _, body) = send(
+            &app,
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "username": "nobody", "password": "longpassword1" })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            body["error"], "invalid credentials",
+            "unknown users get the same message as wrong passwords"
+        );
+
+        // Case-insensitive username, correct password.
+        let (status, cookie, body) = send(
+            &app,
+            Method::POST,
+            "/api/auth/login",
+            Some(json!({ "username": "kokiri", "password": "longpassword1" })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["user"]["username"], "Kokiri");
+        let cookie = cookie.expect("login should start a session");
+
+        let (status, _, _) = send(&app, Method::GET, "/api/me", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        drop(db_dir);
+    }
+
+    #[tokio::test]
+    async fn registration_validation_and_duplicates() {
+        let (db_dir, state) = test_state(Mode::Local, None).await;
+        let app = router(state);
+
+        let (status, _, _) = register(&app, "Beedle", "longpassword1").await;
+        assert_eq!(status, StatusCode::CREATED);
+
+        // Duplicate, case-insensitive → 409.
+        let (status, _, body) = register(&app, "beedle", "longpassword1").await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(body["error"].is_string());
+
+        // Second distinct user is not admin.
+        let (status, _, body) = register(&app, "Paya", "longpassword1").await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body["user"]["role"], "user");
+
+        // Validation failures → 400 with a message.
+        for (username, password) in [
+            ("ab", "longpassword1"),
+            ("bad name", "longpassword1"),
+            ("okname", "short"),
+        ] {
+            let (status, _, body) = register(&app, username, password).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{username:?}/{password:?}");
+            assert!(body["error"].is_string(), "{body}");
+        }
+
+        drop(db_dir);
+    }
+
+    #[tokio::test]
+    async fn save_routes_follow_mode_policy() {
+        // Local: anonymous browsing still works.
+        let (db_dir, state) = test_state(Mode::Local, None).await;
+        let app = router(state);
+        let (status, _, _) = send(&app, Method::GET, "/api/slots", None, None).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // LAN: anonymous → 401; signed in → 200.
+        let (db_dir2, state2) = test_state(Mode::Lan, None).await;
+        let app2 = router(state2);
+        let (status, _, body) = send(&app2, Method::GET, "/api/slots", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "authentication required");
+
+        let (_, cookie, _) = register(&app2, "LanUser", "longpassword1").await;
+        let cookie = cookie.expect("session cookie");
+        let (status, _, _) = send(&app2, Method::GET, "/api/slots", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Hub: same policy.
+        let (db_dir3, state3) = test_state(Mode::Hub, None).await;
+        let app3 = router(state3);
+        let (status, _, _) = send(&app3, Method::GET, "/api/slots", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let (_, cookie, _) = register(&app3, "HubUser", "longpassword1").await;
+        let cookie = cookie.expect("session cookie");
+        let (status, _, _) = send(&app3, Method::GET, "/api/slots", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::OK);
+
+        // Completion endpoint is behind the same guard.
+        let (status, _, _) = send(&app2, Method::GET, "/api/completion", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        drop(db_dir);
+        drop(db_dir2);
+        drop(db_dir3);
+    }
+
+    #[tokio::test]
+    async fn profiles_require_auth_in_every_mode() {
+        let (db_dir, state) = test_state(Mode::Local, None).await;
+        let app = router(state);
+
+        // Even local mode gates per-user resources.
+        let (status, _, body) = send(&app, Method::GET, "/api/profiles", None, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "authentication required");
+
+        let (_, cookie, _) = register(&app, "ProfileUser", "longpassword1").await;
+        let cookie = cookie.expect("session cookie");
+
+        let (status, _, body) = send(&app, Method::GET, "/api/profiles", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::OK);
+        let profiles = body.as_array().expect("array of profiles");
+        assert_eq!(profiles.len(), 1);
+        assert_eq!(profiles[0]["name"], "Default");
+
+        let (status, _, body) = send(
+            &app,
+            Method::POST,
+            "/api/profiles",
+            Some(json!({ "name": "Master Mode", "game_mode": "master" })),
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body["name"], "Master Mode");
+        assert_eq!(body["game_mode"], "master");
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/api/profiles",
+            Some(json!({ "name": "Bad", "game_mode": "hero" })),
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/api/profiles",
+            Some(json!({ "name": "   " })),
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+
+        // Unauthenticated profile creation is rejected before any validation.
+        let (status, _, _) = send(
+            &app,
+            Method::POST,
+            "/api/profiles",
+            Some(json!({ "name": "Sneaky" })),
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        let (status, _, body) = send(&app, Method::GET, "/api/profiles", None, Some(&cookie)).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.as_array().unwrap().len(), 2);
+
         drop(db_dir);
     }
 }
