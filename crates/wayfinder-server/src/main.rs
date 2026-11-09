@@ -2,6 +2,7 @@ mod auth;
 mod config;
 mod db;
 mod http;
+mod ingest;
 mod saves;
 
 use std::sync::Arc;
@@ -35,6 +36,18 @@ async fn main() -> anyhow::Result<()> {
         Err(error) => tracing::warn!(%error, "could not count registered users"),
     }
 
+    let report = ingest::scan_machine_slots(&config, &db, http::map_dataset()).await;
+    tracing::info!(
+        slots = report.slots,
+        ingested = report.ingested,
+        unchanged = report.unchanged,
+        errors = report.errors,
+        "initial save scan complete"
+    );
+
+    let watcher =
+        ingest::watcher::SaveWatcher::spawn(config.clone(), db.clone(), http::map_dataset());
+
     let app = http::router(AppState {
         config: Arc::new(config),
         db,
@@ -50,6 +63,8 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("server error")?;
+
+    watcher.shutdown().await;
     Ok(())
 }
 

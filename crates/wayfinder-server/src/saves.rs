@@ -1,13 +1,15 @@
-//! Save-slot discovery and summaries for the local/LAN API.
+//! Save-slot reads backed by stored snapshots.
+//!
+//! Ingestion (the folder watcher, startup scan, upload, import) lives in
+//! [`crate::ingest`]; this module only queries `save_slots` and `snapshots`.
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use sqlx::{AssertSqlSafe, Row, SqlitePool};
+use wayfinder_save::{CompletionSummary, SaveFile, SaveStats};
 
-use crate::config::Config;
-use wayfinder_save::{CompletionSummary, SaveCaption, SaveFile, SaveStats};
-
-/// List entry returned by `GET /api/slots`.
+/// List entry returned by the slot endpoints.
 #[derive(Debug, Clone, Serialize)]
 pub struct SlotSummary {
     pub slot: usize,
@@ -38,7 +40,7 @@ pub struct MapCompletion {
 ///
 /// Named flags and Divine Beasts are returned by their dataset `flag` string;
 /// treasure chests are returned by their CRC32 save-flag hash.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CompletedObjects {
     pub shrines: Vec<String>,
     pub towers: Vec<String>,
@@ -52,12 +54,12 @@ pub struct CompletedObjects {
 
 #[derive(Debug)]
 pub enum SlotError {
-    /// No discovered slot has this number.
+    /// No stored slot has this number.
     SlotNotFound,
     /// The slot exists but has no readable caption screenshot.
     CaptionNotFound,
-    /// The `game_data.sav` exists but could not be read or parsed.
-    Unreadable(std::io::Error),
+    /// The stored snapshot metadata could not be decoded.
+    Unreadable(String),
 }
 
 impl std::fmt::Display for SlotError {
@@ -65,16 +67,47 @@ impl std::fmt::Display for SlotError {
         match self {
             Self::SlotNotFound => formatter.write_str("save slot not found"),
             Self::CaptionNotFound => formatter.write_str("caption not found"),
-            Self::Unreadable(error) => write!(formatter, "save file could not be parsed: {error}"),
+            Self::Unreadable(error) => write!(formatter, "stored save data is unreadable: {error}"),
         }
     }
 }
 
-impl std::error::Error for SlotError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+impl std::error::Error for SlotError {}
+
+impl From<sqlx::Error> for SlotError {
+    fn from(error: sqlx::Error) -> Self {
+        Self::Unreadable(error.to_string())
+    }
+}
+
+/// Which owner's slots to read.
+#[derive(Debug, Clone, Copy)]
+pub enum SlotScope<'a> {
+    /// The machine-local source (`profile_id IS NULL`).
+    Machine,
+    /// A profile-owned source.
+    Profile(&'a str),
+}
+
+impl<'a> SlotScope<'a> {
+    fn clause(self) -> &'static str {
         match self {
-            Self::Unreadable(error) => Some(error),
-            _ => None,
+            Self::Machine => "l.profile_id IS NULL",
+            Self::Profile(_) => "l.profile_id = ?",
+        }
+    }
+
+    fn profile_id(self) -> Option<&'a str> {
+        match self {
+            Self::Machine => None,
+            Self::Profile(id) => Some(id),
+        }
+    }
+
+    fn caption_url(self, slot: usize) -> String {
+        match self {
+            Self::Machine => format!("/api/slots/{slot}/caption"),
+            Self::Profile(id) => format!("/api/profiles/{id}/slots/{slot}/caption"),
         }
     }
 }
@@ -84,7 +117,7 @@ impl std::error::Error for SlotError {
 /// The dataset joins save flags to Zelda Dungeon markers. The server keeps the
 /// `flag -> friendly name` join for caption labels and, per object type, the
 /// dataset flags (and treasure hashes) used for per-object completion.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct MapObjects {
     labels: HashMap<String, String>,
     shrines: Vec<String>,
@@ -208,57 +241,7 @@ impl MapObjects {
     }
 }
 
-/// Enumerate saved slots with their caption metadata.
-pub fn list_slots(config: &Config, objects: &MapObjects) -> Vec<SlotSummary> {
-    config
-        .save_slots()
-        .into_iter()
-        .map(|slot| summary_for(config, slot, objects))
-        .collect()
-}
-
-/// Load a slot's metadata, player stats, and completion summary.
-pub fn load_slot(
-    config: &Config,
-    slot: usize,
-    objects: &MapObjects,
-) -> Result<SlotDetail, SlotError> {
-    let save = parse_save(config, slot)?;
-    Ok(SlotDetail {
-        summary: summary_for(config, slot, objects),
-        stats: save.stats(),
-        completion: save.completion_summary(),
-    })
-}
-
-/// Load the dataset identifiers of every object completed in a slot.
-pub fn load_map_completion(
-    config: &Config,
-    slot: usize,
-    objects: &MapObjects,
-) -> Result<MapCompletion, SlotError> {
-    let save = parse_save(config, slot)?;
-    Ok(MapCompletion {
-        slot,
-        completed: CompletedObjects {
-            shrines: completed_flags(&save, &objects.shrines),
-            towers: completed_flags(&save, &objects.towers),
-            memories: completed_flags(&save, &objects.memories),
-            koroks: completed_flags(&save, &objects.koroks),
-            locations: completed_flags(&save, &objects.locations),
-            enemies: completed_flags(&save, &objects.enemies),
-            divine_beasts: completed_flags(&save, &objects.divine_beasts),
-            treasures: objects
-                .treasures
-                .iter()
-                .copied()
-                .filter(|&hash| save.is_key_set(hash))
-                .collect(),
-        },
-    })
-}
-
-fn completed_flags(save: &SaveFile, flags: &[String]) -> Vec<String> {
+fn flags_set(save: &SaveFile, flags: &[String]) -> Vec<String> {
     flags
         .iter()
         .filter(|flag| save.is_flag_set(flag))
@@ -266,46 +249,255 @@ fn completed_flags(save: &SaveFile, flags: &[String]) -> Vec<String> {
         .collect()
 }
 
-/// Load only the completion summary, kept for `/api/completion?slot=N`.
-pub fn load_completion(config: &Config, slot: usize) -> Result<CompletionSummary, SlotError> {
-    Ok(parse_save(config, slot)?.completion_summary())
-}
-
-/// Read the caption screenshot for a discovered slot.
-pub fn load_caption(config: &Config, slot: usize) -> Result<Vec<u8>, SlotError> {
-    let path = config
-        .save_caption_image_path(slot)
-        .ok_or(SlotError::SlotNotFound)?;
-    std::fs::read(path).map_err(|_| SlotError::CaptionNotFound)
-}
-
-fn parse_save(config: &Config, slot: usize) -> Result<SaveFile, SlotError> {
-    let path = config.save_slot_path(slot).ok_or(SlotError::SlotNotFound)?;
-    SaveFile::from_path(path).map_err(SlotError::Unreadable)
-}
-
-fn summary_for(config: &Config, slot: usize, objects: &MapObjects) -> SlotSummary {
-    let caption = config
-        .save_caption_path(slot)
-        .and_then(read_caption)
-        .unwrap_or_default();
-    let label = objects
-        .for_location(&caption.location)
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("Slot {slot}"));
-
-    SlotSummary {
-        slot,
-        label,
-        location: caption.location,
-        map_area: caption.map_area,
-        saved_at: caption.saved_at,
-        caption_url: format!("/api/slots/{slot}/caption"),
+/// Compute the current per-object completion for a parsed save.
+pub(crate) fn completed_objects(save: &SaveFile, objects: &MapObjects) -> CompletedObjects {
+    CompletedObjects {
+        shrines: flags_set(save, &objects.shrines),
+        towers: flags_set(save, &objects.towers),
+        memories: flags_set(save, &objects.memories),
+        koroks: flags_set(save, &objects.koroks),
+        locations: flags_set(save, &objects.locations),
+        enemies: flags_set(save, &objects.enemies),
+        divine_beasts: flags_set(save, &objects.divine_beasts),
+        treasures: objects
+            .treasures
+            .iter()
+            .copied()
+            .filter(|&hash| save.is_key_set(hash))
+            .collect(),
     }
 }
 
-fn read_caption(path: std::path::PathBuf) -> Option<SaveCaption> {
-    SaveFile::from_path(path).ok().map(|save| save.caption())
+/// List the machine-local slots that are currently present on disk.
+pub async fn list_machine_slots(pool: &SqlitePool) -> Result<Vec<SlotSummary>, SlotError> {
+    list_slots(pool, SlotScope::Machine).await
+}
+
+/// List a profile's stored slots.
+pub async fn list_profile_slots(
+    pool: &SqlitePool,
+    profile_id: &str,
+) -> Result<Vec<SlotSummary>, SlotError> {
+    list_slots(pool, SlotScope::Profile(profile_id)).await
+}
+
+async fn list_slots(
+    pool: &SqlitePool,
+    scope: SlotScope<'_>,
+) -> Result<Vec<SlotSummary>, SlotError> {
+    let statement = format!(
+        "SELECT l.slot_index, l.label, l.caption_location, l.caption_map_area, \
+         COALESCE((SELECT s.captured_at FROM snapshots s WHERE s.slot_id = l.id \
+         ORDER BY s.captured_at DESC, s.ingested_at DESC LIMIT 1), 0) AS saved_at \
+         FROM save_slots l WHERE {} AND l.present = 1 ORDER BY l.slot_index",
+        scope.clause()
+    );
+
+    let mut query = sqlx::query(AssertSqlSafe(statement));
+    if let Some(profile_id) = scope.profile_id() {
+        query = query.bind(profile_id);
+    }
+    let rows = query.fetch_all(pool).await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| {
+            let slot = row.get::<i64, _>("slot_index") as usize;
+            SlotSummary {
+                slot,
+                label: row.get("label"),
+                location: row.get("caption_location"),
+                map_area: row.get("caption_map_area"),
+                saved_at: row.get::<i64, _>("saved_at").max(0) as u64,
+                caption_url: scope.caption_url(slot),
+            }
+        })
+        .collect())
+}
+
+pub async fn load_machine_slot(pool: &SqlitePool, slot: usize) -> Result<SlotDetail, SlotError> {
+    load_slot(pool, SlotScope::Machine, slot).await
+}
+
+pub async fn load_profile_slot(
+    pool: &SqlitePool,
+    profile_id: &str,
+    slot: usize,
+) -> Result<SlotDetail, SlotError> {
+    load_slot(pool, SlotScope::Profile(profile_id), slot).await
+}
+
+async fn load_slot(
+    pool: &SqlitePool,
+    scope: SlotScope<'_>,
+    slot: usize,
+) -> Result<SlotDetail, SlotError> {
+    let statement = format!(
+        "SELECT l.slot_index, l.label, l.caption_location, l.caption_map_area, \
+         sn.stats_json, sn.completion_summary_json, sn.captured_at \
+         FROM save_slots l JOIN snapshots sn ON sn.id = ( \
+             SELECT id FROM snapshots WHERE slot_id = l.id \
+             ORDER BY captured_at DESC, ingested_at DESC LIMIT 1) \
+         WHERE {} AND l.slot_index = ? AND l.present = 1",
+        scope.clause()
+    );
+
+    let mut query = sqlx::query(AssertSqlSafe(statement));
+    if let Some(profile_id) = scope.profile_id() {
+        query = query.bind(profile_id);
+    }
+    let row = query
+        .bind(slot as i64)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(SlotError::SlotNotFound)?;
+
+    let stats: SaveStats = serde_json::from_str(row.get("stats_json"))
+        .map_err(|error| SlotError::Unreadable(error.to_string()))?;
+    let completion: CompletionSummary = serde_json::from_str(row.get("completion_summary_json"))
+        .map_err(|error| SlotError::Unreadable(error.to_string()))?;
+    let slot_index = row.get::<i64, _>("slot_index") as usize;
+
+    Ok(SlotDetail {
+        summary: SlotSummary {
+            slot: slot_index,
+            label: row.get("label"),
+            location: row.get("caption_location"),
+            map_area: row.get("caption_map_area"),
+            saved_at: row.get::<i64, _>("captured_at").max(0) as u64,
+            caption_url: scope.caption_url(slot_index),
+        },
+        stats,
+        completion,
+    })
+}
+
+pub async fn load_machine_map(pool: &SqlitePool, slot: usize) -> Result<MapCompletion, SlotError> {
+    load_map(pool, SlotScope::Machine, slot).await
+}
+
+pub async fn load_profile_map(
+    pool: &SqlitePool,
+    profile_id: &str,
+    slot: usize,
+) -> Result<MapCompletion, SlotError> {
+    load_map(pool, SlotScope::Profile(profile_id), slot).await
+}
+
+async fn load_map(
+    pool: &SqlitePool,
+    scope: SlotScope<'_>,
+    slot: usize,
+) -> Result<MapCompletion, SlotError> {
+    let completion_json = completion_json(pool, scope, slot).await?;
+    // Current per-object completion is derived data; a decode failure is a
+    // stored-data problem, not a reason to fail the whole map request.
+    let completed: CompletedObjects = match serde_json::from_str(&completion_json) {
+        Ok(completed) => completed,
+        Err(error) => {
+            tracing::warn!(slot, %error, "could not decode stored completion; serving empty");
+            CompletedObjects::default()
+        }
+    };
+    Ok(MapCompletion { slot, completed })
+}
+
+pub async fn load_machine_completion(
+    pool: &SqlitePool,
+    slot: usize,
+) -> Result<CompletionSummary, SlotError> {
+    load_completion(pool, SlotScope::Machine, slot).await
+}
+
+pub async fn load_profile_completion(
+    pool: &SqlitePool,
+    profile_id: &str,
+    slot: usize,
+) -> Result<CompletionSummary, SlotError> {
+    load_completion(pool, SlotScope::Profile(profile_id), slot).await
+}
+
+async fn load_completion(
+    pool: &SqlitePool,
+    scope: SlotScope<'_>,
+    slot: usize,
+) -> Result<CompletionSummary, SlotError> {
+    let statement = format!(
+        "SELECT sn.completion_summary_json FROM save_slots l JOIN snapshots sn ON sn.id = ( \
+             SELECT id FROM snapshots WHERE slot_id = l.id \
+             ORDER BY captured_at DESC, ingested_at DESC LIMIT 1) \
+         WHERE {} AND l.slot_index = ? AND l.present = 1",
+        scope.clause()
+    );
+    let mut query = sqlx::query(AssertSqlSafe(statement));
+    if let Some(profile_id) = scope.profile_id() {
+        query = query.bind(profile_id);
+    }
+    let json: String = query
+        .bind(slot as i64)
+        .fetch_optional(pool)
+        .await?
+        .map(|row| row.get("completion_summary_json"))
+        .ok_or(SlotError::SlotNotFound)?;
+
+    serde_json::from_str(&json).map_err(|error| SlotError::Unreadable(error.to_string()))
+}
+
+async fn completion_json(
+    pool: &SqlitePool,
+    scope: SlotScope<'_>,
+    slot: usize,
+) -> Result<String, SlotError> {
+    let statement = format!(
+        "SELECT completion_json FROM save_slots l \
+         WHERE {} AND l.slot_index = ? AND l.present = 1",
+        scope.clause()
+    );
+    let mut query = sqlx::query(AssertSqlSafe(statement));
+    if let Some(profile_id) = scope.profile_id() {
+        query = query.bind(profile_id);
+    }
+    query
+        .bind(slot as i64)
+        .fetch_optional(pool)
+        .await?
+        .map(|row| row.get("completion_json"))
+        .ok_or(SlotError::SlotNotFound)
+}
+
+pub async fn load_machine_caption(pool: &SqlitePool, slot: usize) -> Result<Vec<u8>, SlotError> {
+    load_caption(pool, SlotScope::Machine, slot).await
+}
+
+pub async fn load_profile_caption(
+    pool: &SqlitePool,
+    profile_id: &str,
+    slot: usize,
+) -> Result<Vec<u8>, SlotError> {
+    load_caption(pool, SlotScope::Profile(profile_id), slot).await
+}
+
+async fn load_caption(
+    pool: &SqlitePool,
+    scope: SlotScope<'_>,
+    slot: usize,
+) -> Result<Vec<u8>, SlotError> {
+    let statement = format!(
+        "SELECT caption_image FROM save_slots l \
+         WHERE {} AND l.slot_index = ? AND l.present = 1",
+        scope.clause()
+    );
+    let mut query = sqlx::query(AssertSqlSafe(statement));
+    if let Some(profile_id) = scope.profile_id() {
+        query = query.bind(profile_id);
+    }
+    let row = query
+        .bind(slot as i64)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(SlotError::SlotNotFound)?;
+    row.get::<Option<Vec<u8>>, _>("caption_image")
+        .ok_or(SlotError::CaptionNotFound)
 }
 
 #[cfg(test)]
@@ -315,8 +507,11 @@ pub(crate) mod test_support {
     use wayfinder_save::{HEADER_LEN, RECORD_LEN, SENTINEL, SaveFile, VERSION_1_9_0, keys};
 
     pub fn temp_root(name: &str) -> PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("wayfinder-saves-{name}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "wayfinder-saves-{name}-{}-{}",
+            std::process::id(),
+            uuid::Uuid::now_v7()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         root
@@ -404,238 +599,5 @@ pub(crate) mod test_support {
             std::fs::write(slot_dir.join("caption.jpg"), image).unwrap();
         }
         slot_dir
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::test_support::{build_save, caption_save, temp_root, valid_save, write_slot};
-    use super::*;
-    use crate::config::Mode;
-
-    fn test_config(mode: Mode, save_dir: Option<PathBuf>) -> Config {
-        Config {
-            mode,
-            bind: "127.0.0.1:0".parse().unwrap(),
-            save_dir,
-            control_addr: "127.0.0.1:7777".parse().unwrap(),
-            data_dir: PathBuf::from("data"),
-            cookie_secure: false,
-        }
-    }
-
-    #[test]
-    fn resolves_friendly_labels() {
-        let labels = MapObjects::from_json(
-            br#"{
-                "locations": [
-                    {"flag": "Location_FaronHatago000", "match_name": "Dueling Peaks Stable"}
-                ],
-                "shrines": [
-                    {"flag": "Clear_Dungeon015", "name": "Toto Sah Shrine"}
-                ]
-            }"#,
-        )
-        .unwrap();
-
-        assert_eq!(
-            labels.for_location("FaronHatago000"),
-            Some("Dueling Peaks Stable")
-        );
-        assert_eq!(labels.for_location("Dungeon015"), Some("Toto Sah Shrine"));
-        assert_eq!(
-            labels.for_location("Location_FaronHatago000"),
-            Some("Dueling Peaks Stable")
-        );
-        assert_eq!(labels.for_location(""), None);
-        assert_eq!(labels.for_location("Missing000"), None);
-    }
-
-    #[test]
-    fn lists_slots_with_caption_metadata_and_fallbacks() {
-        let root = temp_root("list");
-        write_slot(
-            &root.join("save_0"),
-            0,
-            &valid_save(),
-            Some(&caption_save()),
-            Some(b"jpeg"),
-        );
-        write_slot(&root.join("save_0"), 2, &valid_save(), None, None);
-
-        let config = test_config(Mode::Local, Some(root.clone()));
-        let labels = MapObjects::from_json(
-            br#"{"locations":[{"flag":"Location_FaronHatago000","match_name":"Dueling Peaks Stable"}]}"#,
-        )
-        .unwrap();
-        let slots = list_slots(&config, &labels);
-
-        assert_eq!(slots.len(), 2);
-        assert_eq!(slots[0].slot, 0);
-        assert_eq!(slots[0].label, "Dueling Peaks Stable");
-        assert_eq!(slots[0].location, "FaronHatago000");
-        assert_eq!(slots[0].map_area, "MapArea_WestHateru");
-        assert_eq!(slots[0].saved_at, 1_794_087_241);
-        assert_eq!(slots[0].caption_url, "/api/slots/0/caption");
-        assert_eq!(slots[1].slot, 2);
-        assert_eq!(slots[1].label, "Slot 2");
-        assert_eq!(slots[1].saved_at, 0);
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn loads_stats_and_completion_for_a_slot() {
-        let root = temp_root("detail");
-        write_slot(
-            &root.join("save_0"),
-            0,
-            &valid_save(),
-            Some(&caption_save()),
-            Some(b"jpeg"),
-        );
-
-        let config = test_config(Mode::Local, Some(root.clone()));
-        let detail = load_slot(&config, 0, &MapObjects::default()).unwrap();
-
-        assert_eq!(detail.summary.slot, 0);
-        assert_eq!(detail.stats.play_time_seconds, 50_166);
-        assert_eq!(detail.stats.rupees, 1_084);
-        assert_eq!(detail.stats.hearts.current, 4.0);
-        assert_eq!(detail.stats.stamina.max, 1_200.0);
-        assert_eq!(detail.stats.location.map, "G-6");
-        assert_eq!(detail.completion.shrines.completed, 1);
-        assert_eq!(load_completion(&config, 0).unwrap().shrines.completed, 1);
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn loads_per_object_map_completion() {
-        const KOROK: &str = "MainField_Npc_HiddenKorokGround_3148789636";
-        const CHEST: u32 = 2_304_095;
-
-        let records = vec![
-            (SaveFile::completion_key("Clear_Dungeon015"), 1),
-            (SaveFile::completion_key("MapTower_07"), 1),
-            (SaveFile::completion_key(KOROK), 1),
-            (SaveFile::completion_key("Clear_RemainsWater"), 1),
-            (CHEST, 1),
-            // Present but zero: not complete.
-            (SaveFile::completion_key("Clear_Dungeon016"), 0),
-        ];
-
-        let root = temp_root("map-completion");
-        write_slot(&root.join("save_0"), 0, &build_save(&records), None, None);
-        let config = test_config(Mode::Local, Some(root.clone()));
-
-        let objects = MapObjects::from_json(
-            br#"{
-                "shrines": [
-                    {"flag": "Clear_Dungeon015", "name": "Toto Sah Shrine"},
-                    {"flag": "Clear_Dungeon016", "name": "Other Shrine"}
-                ],
-                "towers": [{"flag": "MapTower_07", "name": "Tower"}],
-                "koroks": [{"flag": "MainField_Npc_HiddenKorokGround_3148789636"}],
-                "divineBeasts": [
-                    {"flag": "Clear_RemainsWater", "name": "Divine Beast Vah Ruta"},
-                    {"flag": "Clear_RemainsFire", "name": "Divine Beast Vah Rudania"}
-                ],
-                "treasures": [{"id": "Treasure0001", "hash": 2304095}]
-            }"#,
-        )
-        .unwrap();
-
-        let completion = load_map_completion(&config, 0, &objects).unwrap();
-        assert_eq!(completion.slot, 0);
-        assert_eq!(completion.completed.shrines, vec!["Clear_Dungeon015"]);
-        assert_eq!(completion.completed.towers, vec!["MapTower_07"]);
-        assert_eq!(completion.completed.koroks, vec![KOROK]);
-        assert_eq!(
-            completion.completed.divine_beasts,
-            vec!["Clear_RemainsWater"]
-        );
-        assert_eq!(completion.completed.treasures, vec![CHEST]);
-        assert!(completion.completed.memories.is_empty());
-        assert!(completion.completed.locations.is_empty());
-        assert!(completion.completed.enemies.is_empty());
-
-        assert!(matches!(
-            load_map_completion(&config, 9, &objects),
-            Err(SlotError::SlotNotFound)
-        ));
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn distinguishes_missing_and_corrupt_slots() {
-        let root = temp_root("errors");
-        write_slot(&root.join("save_0"), 1, b"not a save", None, None);
-        let config = test_config(Mode::Local, Some(root.clone()));
-
-        assert!(matches!(
-            load_slot(&config, 9, &MapObjects::default()),
-            Err(SlotError::SlotNotFound)
-        ));
-        assert!(matches!(
-            load_slot(&config, 1, &MapObjects::default()),
-            Err(SlotError::Unreadable(_))
-        ));
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn serves_caption_images_for_discovered_slots() {
-        let root = temp_root("caption");
-        write_slot(
-            &root.join("save_0"),
-            0,
-            &build_save(&[]),
-            Some(&caption_save()),
-            Some(b"jpeg-bytes"),
-        );
-        write_slot(&root.join("save_0"), 1, &valid_save(), None, None);
-        let config = test_config(Mode::Local, Some(root.clone()));
-
-        assert_eq!(load_caption(&config, 0).unwrap(), b"jpeg-bytes");
-        assert!(matches!(
-            load_caption(&config, 1),
-            Err(SlotError::CaptionNotFound)
-        ));
-        assert!(matches!(
-            load_caption(&config, 9),
-            Err(SlotError::SlotNotFound)
-        ));
-
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn hub_mode_exposes_no_slots() {
-        let root = temp_root("hub");
-        write_slot(
-            &root.join("save_0"),
-            0,
-            &valid_save(),
-            Some(&caption_save()),
-            Some(b"jpeg"),
-        );
-        let config = test_config(Mode::Hub, Some(root.clone()));
-
-        assert!(list_slots(&config, &MapObjects::default()).is_empty());
-        assert!(matches!(
-            load_slot(&config, 0, &MapObjects::default()),
-            Err(SlotError::SlotNotFound)
-        ));
-        assert!(matches!(
-            load_caption(&config, 0),
-            Err(SlotError::SlotNotFound)
-        ));
-
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

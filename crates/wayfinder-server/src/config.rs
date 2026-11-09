@@ -56,6 +56,63 @@ pub struct Config {
     /// Mark the session cookie `Secure` for TLS deployments. Only set this for
     /// HTTPS; a plain-HTTP deployment would drop the cookie entirely.
     pub cookie_secure: bool,
+    /// Maximum snapshots retained per save slot; `0` keeps all history.
+    pub snapshot_limit: u32,
+    /// Store a gzip-compressed copy of each saved `game_data.sav`.
+    pub keep_raw_saves: bool,
+    /// Watch the local save folder for changes (local/LAN only).
+    pub watch_saves: bool,
+    /// Maximum accepted multipart upload size in bytes.
+    pub max_upload_bytes: usize,
+}
+
+/// A numbered slot folder discovered on disk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredSlot {
+    pub index: usize,
+    pub dir: PathBuf,
+}
+
+/// Discover numbered save slots below `root`.
+///
+/// Accepts the three layouts Savage Wind can produce: a save root containing
+/// `save_0`, a profile folder containing numbered slot folders, or a single
+/// slot folder containing `game_data.sav` directly.
+///
+/// Returns an error when the directory cannot be listed so callers can avoid
+/// marking every slot absent after a transient failure.
+pub fn try_discover_slots(root: &Path) -> std::io::Result<Vec<DiscoveredSlot>> {
+    if root.join("save_0").is_dir() {
+        return discover_numbered(root.join("save_0"));
+    }
+    if root.join("game_data.sav").is_file() {
+        return Ok(vec![DiscoveredSlot {
+            index: 0,
+            dir: root.to_path_buf(),
+        }]);
+    }
+    discover_numbered(root.to_path_buf())
+}
+
+fn discover_numbered(profile: PathBuf) -> std::io::Result<Vec<DiscoveredSlot>> {
+    let mut slots: Vec<DiscoveredSlot> = std::fs::read_dir(&profile)?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            if name.is_empty() || !name.chars().all(|character| character.is_ascii_digit()) {
+                return None;
+            }
+            let index = name.parse().ok()?;
+            let dir = entry.path();
+            dir.join("game_data.sav")
+                .is_file()
+                .then_some(DiscoveredSlot { index, dir })
+        })
+        .collect();
+    slots.sort_by_key(|slot| slot.index);
+    slots.dedup_by_key(|slot| slot.index);
+    Ok(slots)
 }
 
 impl Config {
@@ -91,6 +148,35 @@ impl Config {
             Err(_) => false,
         };
 
+        let snapshot_limit = match std::env::var("WAYFINDER_SNAPSHOT_LIMIT") {
+            Ok(value) => value
+                .trim()
+                .parse()
+                .map_err(|error| format!("invalid WAYFINDER_SNAPSHOT_LIMIT: {error}"))?,
+            Err(_) => 500,
+        };
+
+        let keep_raw_saves = match std::env::var("WAYFINDER_KEEP_RAW_SAVES") {
+            Ok(value) => parse_bool("WAYFINDER_KEEP_RAW_SAVES", &value)?,
+            Err(_) => false,
+        };
+
+        let watch_saves = match std::env::var("WAYFINDER_WATCH") {
+            Ok(value) => parse_bool("WAYFINDER_WATCH", &value)?,
+            Err(_) => true,
+        };
+
+        let max_upload_bytes = match std::env::var("WAYFINDER_MAX_UPLOAD_BYTES") {
+            Ok(value) => {
+                let parsed: usize = value
+                    .trim()
+                    .parse()
+                    .map_err(|error| format!("invalid WAYFINDER_MAX_UPLOAD_BYTES: {error}"))?;
+                parsed.max(512 * 1024)
+            }
+            Err(_) => 8 * 1024 * 1024,
+        };
+
         Ok(Self {
             mode,
             bind,
@@ -98,6 +184,10 @@ impl Config {
             control_addr,
             data_dir,
             cookie_secure,
+            snapshot_limit,
+            keep_raw_saves,
+            watch_saves,
+            max_upload_bytes,
         })
     }
 
@@ -110,79 +200,69 @@ impl Config {
             .map(|path| path.display().to_string())
     }
 
-    /// Discover saved slots in local/LAN mode.
-    ///
-    /// `WAYFINDER_SAVE_DIR` may point at the save root (`.../save`), at the
-    /// `save_0` profile folder itself, or directly at one slot folder. Hub mode
-    /// never exposes a filesystem save.
+    /// Directory the watcher should watch: the profile folder when the save
+    /// root contains `save_0`, otherwise the configured directory itself.
+    pub fn save_root(&self) -> Option<PathBuf> {
+        if self.mode == Mode::Hub {
+            return None;
+        }
+        let dir = self.save_dir.as_ref()?;
+        if dir.join("save_0").is_dir() {
+            Some(dir.join("save_0"))
+        } else {
+            Some(dir.clone())
+        }
+    }
+
+    /// Discover saved slots in local/LAN mode. Test-only helper now that the
+    /// API reads stored snapshots.
+    #[cfg(test)]
     pub fn save_slots(&self) -> Vec<usize> {
         if self.mode == Mode::Hub {
             return Vec::new();
         }
-        let Some(dir) = self.save_dir.as_ref() else {
-            return Vec::new();
-        };
-
-        let profile = if dir.join("save_0").is_dir() {
-            dir.join("save_0")
-        } else if dir.join("game_data.sav").is_file() {
-            return vec![0];
-        } else {
-            dir.clone()
-        };
-
-        let Ok(entries) = std::fs::read_dir(profile) else {
-            return Vec::new();
-        };
-        let mut slots: Vec<usize> = entries
-            .flatten()
-            .filter_map(|entry| {
-                let name = entry.file_name();
-                let name = name.to_str()?;
-                if name.is_empty() || !name.chars().all(|character| character.is_ascii_digit()) {
-                    return None;
-                }
-                let slot = name.parse().ok()?;
-                entry.path().join("game_data.sav").is_file().then_some(slot)
+        self.save_dir
+            .as_ref()
+            .map(|dir| {
+                try_discover_slots(dir)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|slot| slot.index)
+                    .collect()
             })
-            .collect();
-        slots.sort_unstable();
-        slots.dedup();
-        slots
+            .unwrap_or_default()
     }
 
     /// Resolve a discovered slot directory in local/LAN mode.
+    #[cfg(test)]
     pub fn save_slot_dir(&self, slot: usize) -> Option<PathBuf> {
         if self.mode == Mode::Hub {
             return None;
         }
         let dir = self.save_dir.as_ref()?;
-
-        if dir.join("save_0").is_dir() {
-            let slot_dir = dir.join("save_0").join(slot.to_string());
-            return slot_dir.join("game_data.sav").is_file().then_some(slot_dir);
-        }
-        if dir.join("game_data.sav").is_file() {
-            return (slot == 0).then(|| dir.clone());
-        }
-
-        let slot_dir = dir.join(slot.to_string());
-        slot_dir.join("game_data.sav").is_file().then_some(slot_dir)
+        try_discover_slots(dir)
+            .ok()?
+            .into_iter()
+            .find(|discovered| discovered.index == slot)
+            .map(|discovered| discovered.dir)
     }
 
     /// Resolve the `game_data.sav` for a discovered slot.
+    #[cfg(test)]
     pub fn save_slot_path(&self, slot: usize) -> Option<PathBuf> {
         self.save_slot_dir(slot)
             .map(|directory| directory.join("game_data.sav"))
     }
 
     /// Resolve the summary caption for a discovered slot.
+    #[cfg(test)]
     pub fn save_caption_path(&self, slot: usize) -> Option<PathBuf> {
         self.save_slot_dir(slot)
             .map(|directory| directory.join("caption.sav"))
     }
 
     /// Resolve the screenshot for a discovered slot.
+    #[cfg(test)]
     pub fn save_caption_image_path(&self, slot: usize) -> Option<PathBuf> {
         self.save_slot_dir(slot)
             .map(|directory| directory.join("caption.jpg"))
@@ -197,12 +277,14 @@ fn wayfinder_control_addr() -> String {
 /// explicit `true` is required so that accidental Secure cookies on HTTP
 /// loopback deployments cannot silently break login.
 fn parse_cookie_secure(value: &str) -> Result<bool, String> {
+    parse_bool("WAYFINDER_COOKIE_SECURE", value)
+}
+
+fn parse_bool(name: &str, value: &str) -> Result<bool, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "" | "0" | "false" | "no" | "off" => Ok(false),
-        other => Err(format!(
-            "unknown WAYFINDER_COOKIE_SECURE {other:?}; expected a boolean"
-        )),
+        other => Err(format!("unknown {name} {other:?}; expected a boolean")),
     }
 }
 
@@ -296,6 +378,10 @@ mod tests {
             control_addr: "127.0.0.1:7777".parse().unwrap(),
             data_dir: PathBuf::from("data"),
             cookie_secure: false,
+            snapshot_limit: 500,
+            keep_raw_saves: false,
+            watch_saves: true,
+            max_upload_bytes: 8 * 1024 * 1024,
         }
     }
 

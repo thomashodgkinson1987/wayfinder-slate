@@ -356,6 +356,33 @@ impl Users {
         .await
     }
 
+    /// The user's primary profile (the auto-created `Default` unless another
+    /// was created earlier).
+    pub async fn primary_profile_for_user(&self, user_id: &str) -> sqlx::Result<Option<Profile>> {
+        sqlx::query_as(sql(format!(
+            "SELECT {PROFILE_COLUMNS} FROM profiles WHERE user_id = ? \
+             ORDER BY created_at, id LIMIT 1"
+        )))
+        .bind(user_id)
+        .fetch_optional(&self.0)
+        .await
+    }
+
+    /// One profile, only when it belongs to `user_id`.
+    pub async fn profile_for_user(
+        &self,
+        user_id: &str,
+        profile_id: &str,
+    ) -> sqlx::Result<Option<Profile>> {
+        sqlx::query_as(sql(format!(
+            "SELECT {PROFILE_COLUMNS} FROM profiles WHERE id = ? AND user_id = ?"
+        )))
+        .bind(profile_id)
+        .bind(user_id)
+        .fetch_optional(&self.0)
+        .await
+    }
+
     /// Create a new profile for a user.
     pub async fn create_profile(
         &self,

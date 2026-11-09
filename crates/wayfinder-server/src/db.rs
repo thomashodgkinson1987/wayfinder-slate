@@ -106,7 +106,7 @@ mod tests {
                 .into_iter()
                 .map(|row| row.get::<String, _>("name"))
                 .collect::<Vec<_>>();
-        for expected in ["profiles", "sessions", "users"] {
+        for expected in ["profiles", "sessions", "users", "save_slots", "snapshots"] {
             assert!(
                 names.iter().any(|name| name == expected),
                 "table {expected} missing, got {names:?}"
@@ -117,6 +117,11 @@ mod tests {
             "users_username_unique",
             "idx_profiles_user",
             "idx_sessions_expiry",
+            "idx_save_slots_machine",
+            "idx_save_slots_profile",
+            "idx_save_slots_profile_created",
+            "idx_snapshots_slot_captured",
+            "idx_snapshots_slot_ingested",
         ] {
             let exists: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
