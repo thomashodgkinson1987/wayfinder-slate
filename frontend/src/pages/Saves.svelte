@@ -13,6 +13,7 @@
   } from '../lib/api';
   import { formatSavedAt } from '../lib/format';
   import { parseSlotIndex } from '../lib/slotIndex';
+  import { findSlotFolder } from '../lib/slotFolder';
 
   let {
     config,
@@ -35,6 +36,8 @@
   let gameData = $state<File | null>(null);
   let captionSav = $state<File | null>(null);
   let captionImage = $state<File | null>(null);
+  let folderName = $state<string | null>(null);
+  let folderInput = $state<HTMLInputElement | null>(null);
   let slotIndexText = $state('');
   let uploading = $state(false);
   let uploadError = $state<string | null>(null);
@@ -47,6 +50,11 @@
   let deletingSlot = $state<number | null>(null);
 
   const isLocal = $derived(config?.mode === 'local');
+  const folderStatus = $derived(
+    folderName === null
+      ? null
+      : `Folder "${folderName}" ready: game_data.sav, caption.sav, caption.jpg.`,
+  );
   const importSummary = $derived.by(() => {
     const result = importResult;
     if (result === null) return '';
@@ -110,15 +118,41 @@
     }
   }
 
-  function readFile(event: Event): File | null {
-    return (event.currentTarget as HTMLInputElement).files?.[0] ?? null;
+  function pickFolder(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const result = findSlotFolder(Array.from(input.files ?? []));
+
+    if (!result.ok) {
+      gameData = null;
+      captionSav = null;
+      captionImage = null;
+      folderName = null;
+      uploadNotice = null;
+      uploadError = result.error;
+      input.value = '';
+      return;
+    }
+
+    gameData = result.selection.gameData;
+    captionSav = result.selection.captionSav;
+    captionImage = result.selection.captionImage;
+    folderName = result.selection.slotDirName;
+    // Mirror the folder's slot number; clear the field for next-free.
+    slotIndexText =
+      result.selection.slotNumber === null ? '' : String(result.selection.slotNumber);
+    uploadError = null;
+    uploadNotice = null;
+    // Reset so picking the same folder again still fires a change event.
+    input.value = '';
   }
 
   function resetUpload() {
     gameData = null;
     captionSav = null;
     captionImage = null;
+    folderName = null;
     slotIndexText = '';
+    if (folderInput !== null) folderInput.value = '';
   }
 
   async function submitUpload(event: SubmitEvent) {
@@ -132,8 +166,9 @@
       uploadError = 'No profile available to upload into.';
       return;
     }
-    if (gameData === null) {
-      uploadError = 'Choose a game_data.sav file first.';
+    if (gameData === null || captionSav === null || captionImage === null) {
+      uploadError =
+        'Choose a save folder containing game_data.sav, caption.sav, and caption.jpg first.';
       return;
     }
 
@@ -272,17 +307,18 @@
       <form class="saves-form" onsubmit={submitUpload}>
         <h3 class="form-title">Upload a save</h3>
         <label class="field">
-          <span class="field-label">game_data.sav <em>(required)</em></span>
-          <input type="file" accept=".sav,application/octet-stream" onchange={(event) => (gameData = readFile(event))} />
+          <span class="field-label">Save folder <em>(required)</em></span>
+          <!-- webkitdirectory is non-standard but supported by every desktop
+              browser; it makes the picker choose a folder instead of files. -->
+          <input type="file" webkitdirectory bind:this={folderInput} onchange={pickFolder} />
+          <span class="field-hint">
+            The folder must contain game_data.sav, caption.sav, and caption.jpg —
+            e.g. …/save_0/3.
+          </span>
         </label>
-        <label class="field">
-          <span class="field-label">caption.sav <em>(optional)</em></span>
-          <input type="file" accept=".sav" onchange={(event) => (captionSav = readFile(event))} />
-        </label>
-        <label class="field">
-          <span class="field-label">caption.jpg <em>(optional)</em></span>
-          <input type="file" accept="image/jpeg" onchange={(event) => (captionImage = readFile(event))} />
-        </label>
+        {#if folderStatus !== null}
+          <p class="saves-ok" role="status">{folderStatus}</p>
+        {/if}
         <label class="field slot-number">
           <span class="field-label">Slot number <em>(optional)</em></span>
           <input
@@ -292,6 +328,10 @@
             placeholder="next free"
             bind:value={slotIndexText}
           />
+          <span class="field-hint">
+            Prefilled from the folder name when it is 0–255; clear it to
+            allocate the next free slot.
+          </span>
         </label>
 
         {#if uploadError !== null}
@@ -446,6 +486,12 @@
     margin-top: 18px;
     padding-top: 18px;
     border-top: 1px solid var(--line);
+  }
+
+  .field-hint {
+    color: var(--muted);
+    font-size: 11.5px;
+    line-height: 1.5;
   }
 
   .form-title {

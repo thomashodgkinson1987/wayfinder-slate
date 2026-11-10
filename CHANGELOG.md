@@ -26,8 +26,9 @@ stable until `1.0.0`.
 - API: `POST /api/saves/import-path` imports a save folder in local mode.
 - API: `DELETE /api/profiles/{id}/slots/{slot}` removes a stored profile slot
   and its snapshots.
-- UI: a Saves page for profile uploads, slot deletion, and local folder
-  imports.
+- UI: a Saves page for uploading a save folder (game_data.sav, caption.sav,
+  caption.jpg) to a profile, deleting stored slots, and importing a local
+  folder in local mode.
 
 ### Changed
 
