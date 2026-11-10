@@ -301,8 +301,10 @@
                 selectSlot(Number((event.currentTarget as HTMLSelectElement).value))}
               disabled={summaryLoading}
             >
+              <!-- Option values must be strings to match the select's value
+                  under Svelte's strict comparison, or the picker renders blank. -->
               {#each slots as slot (slot.slot)}
-                <option value={slot.slot}>{slot.label}</option>
+                <option value={String(slot.slot)}>#{slot.slot} · {slot.label}</option>
               {/each}
             </select>
           </label>
