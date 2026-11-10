@@ -11,6 +11,7 @@
     type User,
   } from '../lib/api';
   import { formatSavedAt } from '../lib/format';
+  import { parseSlotIndex } from '../lib/slotIndex';
 
   let {
     config,
@@ -120,21 +121,26 @@
 
   async function submitUpload(event: SubmitEvent) {
     event.preventDefault();
-    if (uploading || profileId === null || gameData === null) return;
+    if (uploading) return;
 
     uploadError = null;
     uploadNotice = null;
 
-    const trimmed = slotIndexText.trim();
-    let slotIndex: number | null = null;
-    if (trimmed !== '') {
-      const parsed = Number(trimmed);
-      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 255) {
-        uploadError = 'Slot number must be a whole number between 0 and 255.';
-        return;
-      }
-      slotIndex = parsed;
+    if (profileId === null) {
+      uploadError = 'No profile available to upload into.';
+      return;
     }
+    if (gameData === null) {
+      uploadError = 'Choose a game_data.sav file first.';
+      return;
+    }
+
+    const parsed = parseSlotIndex(slotIndexText);
+    if (!parsed.ok) {
+      uploadError = parsed.error;
+      return;
+    }
+    const slotIndex = parsed.value;
 
     const profile = profileId;
     uploading = true;
@@ -249,7 +255,13 @@
         </label>
         <label class="field slot-number">
           <span class="field-label">Slot number <em>(optional)</em></span>
-          <input type="number" min="0" max="255" placeholder="next free" bind:value={slotIndexText} />
+          <input
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            placeholder="next free"
+            bind:value={slotIndexText}
+          />
         </label>
 
         {#if uploadError !== null}
@@ -259,7 +271,7 @@
           <p class="saves-ok" role="status">{uploadNotice}</p>
         {/if}
 
-        <button class="primary-button" type="submit" disabled={uploading || gameData === null}>
+        <button class="primary-button" type="submit" disabled={uploading}>
           {uploading ? 'Uploading...' : 'Upload save'}
         </button>
       </form>
