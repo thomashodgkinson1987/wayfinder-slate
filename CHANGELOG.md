@@ -24,7 +24,10 @@ stable until `1.0.0`.
   `caption_sav`, `caption_image`, optional `slot_index`) and
   `GET /api/profiles/{id}/slots` plus `.../{slot}/caption`.
 - API: `POST /api/saves/import-path` imports a save folder in local mode.
-- UI: a Saves page for profile uploads and local folder imports.
+- API: `DELETE /api/profiles/{id}/slots/{slot}` removes a stored profile slot
+  and its snapshots.
+- UI: a Saves page for profile uploads, slot deletion, and local folder
+  imports.
 
 ### Changed
 

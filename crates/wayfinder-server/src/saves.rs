@@ -465,6 +465,24 @@ async fn completion_json(
         .ok_or(SlotError::SlotNotFound)
 }
 
+/// Delete a profile-owned slot and, via the foreign key cascade, every
+/// snapshot stored for it. Returns whether a row was removed.
+///
+/// Machine-local slots are deliberately not deletable here: they mirror the
+/// watched save folder, which would re-ingest them on the next scan.
+pub async fn delete_profile_slot(
+    pool: &SqlitePool,
+    profile_id: &str,
+    slot: usize,
+) -> Result<bool, SlotError> {
+    let result = sqlx::query("DELETE FROM save_slots WHERE profile_id = ? AND slot_index = ?")
+        .bind(profile_id)
+        .bind(slot as i64)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn load_machine_caption(pool: &SqlitePool, slot: usize) -> Result<Vec<u8>, SlotError> {
     load_caption(pool, SlotScope::Machine, slot).await
 }

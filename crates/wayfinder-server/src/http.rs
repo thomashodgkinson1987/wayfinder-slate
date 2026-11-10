@@ -5,7 +5,7 @@ use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use axum_login::AuthManagerLayerBuilder;
 use rust_embed::RustEmbed;
@@ -143,6 +143,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/me", get(me))
         .route("/api/profiles", get(list_profiles).post(create_profile))
         .route("/api/profiles/{id}/slots", get(list_profile_slots))
+        .route(
+            "/api/profiles/{id}/slots/{slot}",
+            delete(delete_profile_slot),
+        )
         .route(
             "/api/profiles/{id}/slots/{slot}/caption",
             get(profile_slot_caption),
@@ -422,6 +426,24 @@ async fn profile_slot_caption(
 
     match saves::load_profile_caption(&state.db, &profile_id, slot).await {
         Ok(bytes) => image_response(bytes),
+        Err(error) => slot_error_response(slot, error),
+    }
+}
+
+/// Remove a stored profile slot (an upload or, later, an agent sync) the
+/// caller owns. The slot's snapshots are removed with it.
+async fn delete_profile_slot(
+    State(state): State<AppState>,
+    auth_session: AuthSession,
+    Path((profile_id, slot)): Path<(String, usize)>,
+) -> Response {
+    if !owns_profile(&state, &auth_session, &profile_id).await {
+        return json_error(StatusCode::NOT_FOUND, "profile not found");
+    }
+
+    match saves::delete_profile_slot(&state.db, &profile_id, slot).await {
+        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(false) => json_error(StatusCode::NOT_FOUND, "save slot not found"),
         Err(error) => slot_error_response(slot, error),
     }
 }
@@ -1566,6 +1588,26 @@ mod tests {
             assert_eq!(json["slot"].as_u64(), Some(expected));
         }
 
+        // Every auto-allocated slot stores a fully parsed snapshot, not just
+        // a row: stats and completion come from the uploaded bytes.
+        for expected in [1, 2] {
+            let (status, _, detail) = send(
+                &app,
+                Method::GET,
+                &format!("/api/slots/{expected}"),
+                None,
+                Some(&cookie),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(detail["slot"].as_u64(), Some(expected));
+            assert_eq!(detail["stats"]["play_time_seconds"].as_u64(), Some(50_166));
+            assert_eq!(
+                detail["completion"]["shrines"]["completed"].as_u64(),
+                Some(1)
+            );
+        }
+
         // The profile-scoped list and caption reflect stored snapshots.
         let (status, _, slots) = send(
             &app,
@@ -1586,6 +1628,91 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(bytes, b"\xff\xd8\xffjpeg".to_vec());
+
+        drop(db_dir);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_profile_slot_and_its_snapshots() {
+        let (db_dir, state) = test_state(Mode::Hub, None).await;
+        let db = state.db.clone();
+        let app = router(state);
+        let (cookie, profile_id) = account(&app, "Deleter").await;
+        let slot_uri = format!("/api/profiles/{profile_id}/slots/0");
+
+        let (ct, body) = multipart(&[
+            ("game_data", &valid_save()),
+            ("caption_image", b"\xff\xd8\xffjpeg"),
+        ]);
+        let (status, _) = send_raw(
+            &app,
+            Method::POST,
+            &format!("/api/profiles/{profile_id}/saves/upload"),
+            Some(&ct),
+            body,
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(snapshot_count(&db).await, 1);
+
+        // Another user's session cannot delete someone else's slot, and
+        // anonymous requests are rejected by the auth layer outright.
+        let (other_cookie, _) = account(&app, "Bystander").await;
+        let (status, _) = send_raw(
+            &app,
+            Method::DELETE,
+            &slot_uri,
+            None,
+            Vec::new(),
+            Some(&other_cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let (status, _) = send_raw(&app, Method::DELETE, &slot_uri, None, Vec::new(), None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+        // The owner deletes the slot: 204, snapshots cascade away, and every
+        // read path for the slot number comes up empty afterwards.
+        let (status, _) = send_raw(
+            &app,
+            Method::DELETE,
+            &slot_uri,
+            None,
+            Vec::new(),
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert_eq!(snapshot_count(&db).await, 0);
+
+        let (status, _, slots) = send(
+            &app,
+            Method::GET,
+            &format!("/api/profiles/{profile_id}/slots"),
+            None,
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(slots.as_array().unwrap().is_empty());
+
+        for uri in ["/api/slots/0", "/api/slots/0/map", "/api/slots/0/caption"] {
+            let (status, _) = raw_get(&app, uri, Some(&cookie)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "GET {uri} after delete");
+        }
+
+        // Deleting the same slot again reports it as gone.
+        let (status, _) = send_raw(
+            &app,
+            Method::DELETE,
+            &slot_uri,
+            None,
+            Vec::new(),
+            Some(&cookie),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
 
         drop(db_dir);
     }

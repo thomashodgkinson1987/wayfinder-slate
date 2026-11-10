@@ -1,5 +1,6 @@
 <script lang="ts">
   import {
+    deleteProfileSlot,
     getProfileSlots,
     getProfiles,
     importPath,
@@ -16,11 +17,11 @@
   let {
     config,
     user,
-    onuploaded,
+    onchanged,
   }: {
     config: AppConfig | null;
     user: User | null;
-    onuploaded: () => void;
+    onchanged: () => void;
   } = $props();
 
   let profiles = $state<Profile[]>([]);
@@ -43,6 +44,7 @@
   let importing = $state(false);
   let importError = $state<string | null>(null);
   let importResult = $state<ImportResult | null>(null);
+  let deletingSlot = $state<number | null>(null);
 
   const isLocal = $derived(config?.mode === 'local');
   const importSummary = $derived.by(() => {
@@ -153,11 +155,31 @@
       uploadNotice = `Stored "${saved.label}" in slot ${saved.slot}.`;
       resetUpload();
       await loadSlots(profile);
-      onuploaded();
+      onchanged();
     } catch (cause) {
       uploadError = cause instanceof Error ? cause.message : String(cause);
     } finally {
       uploading = false;
+    }
+  }
+
+  async function deleteSlot(slot: number) {
+    const id = profileId;
+    if (id === null || deletingSlot !== null) return;
+    if (!window.confirm(`Delete slot #${slot} and its stored snapshots? This cannot be undone.`)) {
+      return;
+    }
+
+    deletingSlot = slot;
+    slotsError = null;
+    try {
+      await deleteProfileSlot(id, slot);
+      await loadSlots(id);
+      onchanged();
+    } catch (cause) {
+      slotsError = cause instanceof Error ? cause.message : String(cause);
+    } finally {
+      deletingSlot = null;
     }
   }
 
@@ -170,7 +192,7 @@
     importing = true;
     try {
       importResult = await importPath(importDir.trim());
-      onuploaded();
+      onchanged();
     } catch (cause) {
       importError = cause instanceof Error ? cause.message : String(cause);
     } finally {
@@ -234,6 +256,14 @@
                 <span class="slot-label">{slot.label}</span>
                 <span class="slot-meta">{formatSavedAt(slot.saved_at) || '—'}</span>
               </span>
+              <button
+                type="button"
+                class="slot-delete"
+                disabled={deletingSlot !== null}
+                onclick={() => void deleteSlot(slot.slot)}
+              >
+                {deletingSlot === slot.slot ? 'Deleting…' : 'Delete'}
+              </button>
             </li>
           {/each}
         </ul>
@@ -371,6 +401,7 @@
   }
 
   .slot-body {
+    flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
@@ -384,6 +415,28 @@
     color: var(--muted);
     font-size: 11.5px;
     overflow-wrap: anywhere;
+  }
+
+  .slot-delete {
+    flex: none;
+    align-self: center;
+    padding: 4px 10px;
+    font-size: 11.5px;
+    color: var(--muted);
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+  }
+
+  .slot-delete:hover:not(:disabled) {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+
+  .slot-delete:disabled {
+    cursor: default;
+    opacity: 0.6;
   }
 
   .saves-form {

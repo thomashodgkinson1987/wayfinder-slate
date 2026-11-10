@@ -131,7 +131,10 @@ local, LAN, and hub deployments.
   1 MB per save.
 - In hub mode, `/api/slots` reads the signed-in user's primary profile. Use the
   **Saves** page to upload `game_data.sav` (required) plus optional `caption.sav`
-  and `caption.jpg` into any owned profile.
+  and `caption.jpg` into any owned profile, and to delete stored profile slots
+  (`DELETE /api/profiles/{id}/slots/{slot}` removes the slot and its snapshots;
+  machine-local slots always mirror the watched folder and cannot be deleted
+  through the API).
 - `POST /api/saves/import-path` imports a folder's slots into the machine-local
   store. It is available only in local mode; LAN and hub return `403`.
 

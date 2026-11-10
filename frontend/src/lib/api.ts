@@ -367,6 +367,17 @@ export async function uploadSlot(
   return (await response.json()) as SlotSummary;
 }
 
+/** Remove a stored save slot owned by a profile, snapshots included. */
+export async function deleteProfileSlot(profileId: string, slot: number): Promise<void> {
+  const response = await fetch(`/api/profiles/${encodeURIComponent(profileId)}/slots/${slot}`, {
+    method: 'DELETE',
+    headers: { accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(await apiError(response, 'Could not delete the save slot'));
+  }
+}
+
 export interface ImportError {
   slot: number;
   error: string;

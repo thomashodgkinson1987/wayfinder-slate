@@ -345,7 +345,7 @@
       {:else if page === 'play-data'}
         <PlayData {config} {summary} {saveError} loading={summaryLoading} />
       {:else if page === 'saves'}
-        <Saves {config} {user} onuploaded={() => void loadSlots()} />
+        <Saves {config} {user} onchanged={() => void loadSlots()} />
       {:else}
         <Setup {config} />
       {/if}
